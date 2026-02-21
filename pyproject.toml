@@ -17,6 +17,11 @@ dependencies = [
   "jsonschema>=4.0.0"
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
 [project.scripts]
 replaykit = "replaypack.cli.app:main"
 
