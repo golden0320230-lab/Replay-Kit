@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 
 import typer
 
-from replaypack.artifact import write_artifact
+from replaypack.artifact import ArtifactError, read_artifact, write_artifact
 from replaypack.capture import build_demo_run
+from replaypack.replay import ReplayConfig, ReplayError, write_replay_stub_artifact
 
 app = typer.Typer(help="ReplayKit CLI")
 
@@ -32,9 +34,51 @@ def record(
 
 
 @app.command()
-def replay() -> None:
-    """Replay a recorded run (stub)."""
-    typer.echo("replay: not implemented yet")
+def replay(
+    artifact: Path = typer.Argument(..., help="Path to source .rpk artifact."),
+    out: Path = typer.Option(
+        Path("runs/replay-output.rpk"),
+        "--out",
+        help="Output path for replayed artifact.",
+    ),
+    seed: int = typer.Option(
+        0,
+        "--seed",
+        help="Deterministic replay seed.",
+    ),
+    fixed_clock: str = typer.Option(
+        "2026-01-01T00:00:00Z",
+        "--fixed-clock",
+        help="Fixed clock for replay timestamp (ISO-8601 with timezone).",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable replay summary.",
+    ),
+) -> None:
+    """Replay a recorded artifact in offline stub mode."""
+    try:
+        source_run = read_artifact(artifact)
+        config = ReplayConfig(seed=seed, fixed_clock=fixed_clock)
+        envelope = write_replay_stub_artifact(source_run, str(out), config=config)
+    except (ArtifactError, ReplayError, FileNotFoundError) as error:
+        typer.echo(f"replay failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    summary = {
+        "mode": "stub",
+        "source_run_id": source_run.id,
+        "replay_run_id": envelope["payload"]["run"]["id"],
+        "steps": len(source_run.steps),
+        "seed": seed,
+        "fixed_clock": config.fixed_clock,
+        "out": str(out),
+    }
+    if json_output:
+        typer.echo(json.dumps(summary, ensure_ascii=True, sort_keys=True))
+    else:
+        typer.echo(f"replayed artifact: {out}")
 
 
 @app.command()

@@ -1,0 +1,170 @@
+{
+  "checksum": "sha256:47f47466850f7cb203a3dde011eaa133193208aeeff109392b5cef7ddb9d491b",
+  "metadata": {
+    "created_at": "2026-02-21T18:00:00.000000Z",
+    "fixed_clock": "2026-02-21T18:00:00.000000Z",
+    "replay_mode": "stub",
+    "run_id": "replay-839d02e8be26",
+    "seed": 21,
+    "source_run_id": "run-m2-example-001"
+  },
+  "payload": {
+    "run": {
+      "environment_fingerprint": {
+        "cwd": "/Users/aliel-asmar/dev/projects/replaykit",
+        "os": "Darwin",
+        "platform": "macOS-26.3-x86_64-i386-64bit-Mach-O",
+        "replay_mode": "stub",
+        "replay_offline": true,
+        "source_run_id": "run-m2-example-001"
+      },
+      "id": "replay-839d02e8be26",
+      "runtime_versions": {
+        "python": "3.13.1",
+        "replay_fixed_clock": "2026-02-21T18:00:00.000000Z",
+        "replay_mode": "stub",
+        "replay_seed": "21",
+        "replaykit": "0.1.0"
+      },
+      "steps": [
+        {
+          "hash": "sha256:eefff2361c42b24b94484f40f62c29767ab4057326729759de975c13c9ddb9cf",
+          "id": "step-000001",
+          "input": {
+            "input": {
+              "api_key": "[REDACTED]",
+              "messages": [
+                {
+                  "content": "hello",
+                  "role": "user"
+                }
+              ]
+            },
+            "model": "gpt-4o-mini"
+          },
+          "metadata": {
+            "boundary": "model",
+            "model": "gpt-4o-mini",
+            "replay_mode": "stub",
+            "source_step_id": "step-000001"
+          },
+          "output": {
+            "status": "sent"
+          },
+          "type": "model.request"
+        },
+        {
+          "hash": "sha256:2443a2ac1ee7b4433245c63e5e3adc8219516492bcc820776a4d7e39dac3c846",
+          "id": "step-000002",
+          "input": {
+            "model": "gpt-4o-mini"
+          },
+          "metadata": {
+            "boundary": "model",
+            "model": "gpt-4o-mini",
+            "replay_mode": "stub",
+            "source_step_id": "step-000002"
+          },
+          "output": {
+            "output": {
+              "content": "hi",
+              "token": "[REDACTED]"
+            }
+          },
+          "type": "model.response"
+        },
+        {
+          "hash": "sha256:d0dcf3a4afb0feb0586245f4e04f6f306baaa90cfd78ed9bb6853441912099bd",
+          "id": "step-000003",
+          "input": {
+            "args": [
+              "weather"
+            ],
+            "kwargs": {},
+            "tool": "search"
+          },
+          "metadata": {
+            "boundary": "tool",
+            "replay_mode": "stub",
+            "source_step_id": "step-000003",
+            "tool": "search"
+          },
+          "output": {
+            "status": "called"
+          },
+          "type": "tool.request"
+        },
+        {
+          "hash": "sha256:2c96fcdea587c9c1cfa95d289a51df9d9feae7c4f83a37092c5ccd22a730ed95",
+          "id": "step-000004",
+          "input": {
+            "tool": "search"
+          },
+          "metadata": {
+            "boundary": "tool",
+            "replay_mode": "stub",
+            "source_step_id": "step-000004",
+            "tool": "search"
+          },
+          "output": {
+            "result": {
+              "answer": "result for weather",
+              "token": "[REDACTED]"
+            }
+          },
+          "type": "tool.response"
+        },
+        {
+          "hash": "sha256:ac64fb496e710744fc0562a086ec8285a9d9c4099eaab1aa354acba6a7ba761d",
+          "id": "step-000005",
+          "input": {
+            "body": "<omitted by policy>",
+            "headers": {
+              "Authorization": "[REDACTED]",
+              "X-Trace-Id": "trace-001"
+            },
+            "method": "POST",
+            "url": "https://api.example.com/search"
+          },
+          "metadata": {
+            "boundary": "http",
+            "method": "POST",
+            "replay_mode": "stub",
+            "source_step_id": "step-000005",
+            "url": "https://api.example.com/search"
+          },
+          "output": {
+            "status": "sent"
+          },
+          "type": "tool.request"
+        },
+        {
+          "hash": "sha256:91890042033bae96f22e503cb4be14b7220fc02f56ab735a12b90bc06e459531",
+          "id": "step-000006",
+          "input": {
+            "method": "POST",
+            "url": "https://api.example.com/search"
+          },
+          "metadata": {
+            "boundary": "http",
+            "method": "POST",
+            "replay_mode": "stub",
+            "source_step_id": "step-000006",
+            "url": "https://api.example.com/search"
+          },
+          "output": {
+            "body": "<omitted by policy>",
+            "headers": {
+              "Content-Type": "application/json",
+              "Set-Cookie": "[REDACTED]"
+            },
+            "status_code": 200
+          },
+          "type": "tool.response"
+        }
+      ],
+      "timestamp": "2026-02-21T18:00:00.000000Z"
+    }
+  },
+  "version": "1.0"
+}

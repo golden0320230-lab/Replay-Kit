@@ -48,13 +48,20 @@ pyproject.toml        Package metadata and CLI entrypoint
 
 ## Current Status
 
-- `M1` is complete: deterministic artifact schema, canonicalization, and hashing.
-- `M2` capture engine is in progress with model/tool/HTTP wrappers and policy-based redaction.
+- `M1` complete: deterministic artifact schema, canonicalization, and hashing.
+- `M2` complete: capture engine boundaries (model/tool/http) with policy-driven redaction.
+- `M3` complete: offline stub replay with deterministic seed/clock controls.
 
-You can generate a deterministic demo capture artifact with:
+Generate a deterministic capture artifact:
 
 ```bash
 replaykit record --out runs/demo-recording.rpk
+```
+
+Replay it offline into a deterministic output artifact:
+
+```bash
+replaykit replay runs/demo-recording.rpk --out runs/replay-output.rpk --seed 42 --fixed-clock 2026-02-21T18:00:00Z
 ```
 
 ## License

@@ -115,3 +115,13 @@ def test_capture_fixture_is_valid() -> None:
         "tool.request",
         "tool.response",
     ]
+
+
+def test_replay_fixture_is_valid() -> None:
+    fixture_path = Path("examples/runs/m3_replay_stub_from_m2.rpk")
+    run = read_artifact(fixture_path)
+
+    assert run.environment_fingerprint["replay_mode"] == "stub"
+    assert run.environment_fingerprint["replay_offline"] is True
+    assert run.runtime_versions["replay_seed"] == "21"
+    assert len(run.steps) == 6
