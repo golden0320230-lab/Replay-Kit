@@ -125,3 +125,12 @@ def test_replay_fixture_is_valid() -> None:
     assert run.environment_fingerprint["replay_offline"] is True
     assert run.runtime_versions["replay_seed"] == "21"
     assert len(run.steps) == 6
+
+
+def test_diff_fixture_is_valid() -> None:
+    fixture_path = Path("examples/runs/m4_diverged_from_m2.rpk")
+    run = read_artifact(fixture_path)
+
+    assert run.id == "run-m2-example-001"
+    assert run.steps[2].input["args"] == ["forecast"]
+    assert run.steps[2].metadata["tool"] == "search-v2"

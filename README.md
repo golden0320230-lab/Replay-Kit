@@ -51,6 +51,7 @@ pyproject.toml        Package metadata and CLI entrypoint
 - `M1` complete: deterministic artifact schema, canonicalization, and hashing.
 - `M2` complete: capture engine boundaries (model/tool/http) with policy-driven redaction.
 - `M3` complete: offline stub replay with deterministic seed/clock controls.
+- `M4` complete: O(n) diff engine with first-divergence detection and CLI rendering.
 
 Generate a deterministic capture artifact:
 
@@ -62,6 +63,12 @@ Replay it offline into a deterministic output artifact:
 
 ```bash
 replaykit replay runs/demo-recording.rpk --out runs/replay-output.rpk --seed 42 --fixed-clock 2026-02-21T18:00:00Z
+```
+
+Diff two artifacts and stop at first divergence:
+
+```bash
+replaykit diff runs/demo-recording.rpk runs/replay-output.rpk --first-divergence
 ```
 
 ## License

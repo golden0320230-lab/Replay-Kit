@@ -5,6 +5,7 @@ import typer
 
 from replaypack.artifact import ArtifactError, read_artifact, write_artifact
 from replaypack.capture import build_demo_run
+from replaypack.diff import diff_runs, render_diff_summary, render_first_divergence
 from replaypack.replay import ReplayConfig, ReplayError, write_replay_stub_artifact
 
 app = typer.Typer(help="ReplayKit CLI")
@@ -82,9 +83,46 @@ def replay(
 
 
 @app.command()
-def diff() -> None:
-    """Diff two runs and find first divergence (stub)."""
-    typer.echo("diff: not implemented yet")
+def diff(
+    left: Path = typer.Argument(..., help="Path to left .rpk artifact."),
+    right: Path = typer.Argument(..., help="Path to right .rpk artifact."),
+    first_divergence: bool = typer.Option(
+        False,
+        "--first-divergence",
+        help="Stop at and print only first divergent step context.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable diff output.",
+    ),
+    max_changes: int = typer.Option(
+        8,
+        "--max-changes",
+        help="Maximum number of field-level changes to print in text mode.",
+    ),
+) -> None:
+    """Diff two runs and identify first divergence."""
+    try:
+        left_run = read_artifact(left)
+        right_run = read_artifact(right)
+    except (ArtifactError, FileNotFoundError) as error:
+        typer.echo(f"diff failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    result = diff_runs(
+        left_run,
+        right_run,
+        stop_at_first_divergence=first_divergence,
+        max_changes_per_step=max(1, max_changes),
+    )
+
+    if json_output:
+        typer.echo(json.dumps(result.to_dict(), ensure_ascii=True, sort_keys=True))
+        return
+
+    typer.echo(render_diff_summary(result))
+    typer.echo(render_first_divergence(result, max_changes=max_changes))
 
 
 @app.command()

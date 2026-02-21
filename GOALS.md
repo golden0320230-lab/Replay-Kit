@@ -10,7 +10,7 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - [x] M1: Deterministic `.rpk` artifact schema + canonicalization
 - [x] M2: Capture engine (model/tool/http boundaries)
 - [x] M3: Offline stub replay
-- [ ] M4: O(n) diff engine + first divergence detection
+- [x] M4: O(n) diff engine + first divergence detection
 - [ ] M5: Security redaction defaults and bundle export
 - [ ] M6: CLI hardening + CI regression assertions
 - [ ] M7: Local diff UI
@@ -24,8 +24,10 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - [x] Add capture engine tests and deterministic demo CLI recording
 - [x] Implement offline stub replay engine (`M3`)
 - [x] Add replay fixtures for deterministic offline execution (`M3`)
-- [ ] Implement O(n) first-divergence diff engine (`M4`)
-- [ ] Add CLI diff output with first divergence context (`M4`)
+- [x] Implement O(n) first-divergence diff engine (`M4`)
+- [x] Add CLI diff output with first divergence context (`M4`)
+- [ ] Implement bundle export with default redaction profiles (`M5`)
+- [ ] Add replay-safe bundle round-trip tests (`M5`)
 
 ## Task Log
 
@@ -33,3 +35,4 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - 2026-02-21: Completed M1 artifact schema, canonicalization, hashing, and validation tests.
 - 2026-02-21: Completed M2 capture engine boundaries with interception policy, redaction defaults, tests, and CLI demo recording.
 - 2026-02-21: Completed M3 offline stub replay engine with deterministic seed/clock controls and replay CLI.
+- 2026-02-21: Completed M4 O(n) diff engine, first-divergence detection, and CLI diff modes.
