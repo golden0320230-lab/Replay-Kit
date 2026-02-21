@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import time
+import webbrowser
 
 import typer
 
@@ -7,6 +9,7 @@ from replaypack.artifact import ArtifactError, read_artifact, write_artifact, wr
 from replaypack.capture import build_demo_run
 from replaypack.diff import assert_runs, diff_runs, render_diff_summary, render_first_divergence
 from replaypack.replay import ReplayConfig, ReplayError, write_replay_stub_artifact
+from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
 
@@ -252,9 +255,64 @@ def assert_run(
 
 
 @app.command()
-def ui() -> None:
-    """Launch local diff UI (stub)."""
-    typer.echo("ui: not implemented yet")
+def ui(
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Host interface to bind local UI server.",
+    ),
+    port: int = typer.Option(
+        4310,
+        "--port",
+        help="Port for local UI server (0 selects an ephemeral port).",
+    ),
+    left: Path | None = typer.Option(
+        None,
+        "--left",
+        help="Optional default left artifact path to pre-fill UI.",
+    ),
+    right: Path | None = typer.Option(
+        None,
+        "--right",
+        help="Optional default right artifact path to pre-fill UI.",
+    ),
+    browser: bool = typer.Option(
+        False,
+        "--browser/--no-browser",
+        help="Open the local UI URL in default browser.",
+    ),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Start server, verify startup path, then exit.",
+    ),
+) -> None:
+    """Launch local Git-diff style UI for replay artifact inspection."""
+    config = UIServerConfig(host=host, port=port, base_dir=Path.cwd())
+
+    with start_ui_server(config) as (server, _thread):
+        bound_host, bound_port = server.server_address
+        ui_url = build_ui_url(
+            bound_host,
+            bound_port,
+            left=str(left) if left else None,
+            right=str(right) if right else None,
+        )
+
+        if check:
+            typer.echo(f"ui check ok: {ui_url}")
+            return
+
+        typer.echo(f"ui running: {ui_url}")
+
+        if browser:
+            webbrowser.open(ui_url)
+
+        try:
+            while True:
+                time.sleep(0.25)
+        except KeyboardInterrupt:
+            typer.echo("ui stopped")
 
 
 def main() -> None:

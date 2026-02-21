@@ -53,6 +53,8 @@ pyproject.toml        Package metadata and CLI entrypoint
 - `M3` complete: offline stub replay with deterministic seed/clock controls.
 - `M4` complete: O(n) diff engine with first-divergence detection and CLI rendering.
 - `M5` complete: redacted bundle export profiles with replay-safe bundle round-trip.
+- `M6` complete: CI-oriented assertion command and workflow integration.
+- `M7` complete: local Git-diff style UI with first-divergence navigation.
 
 Generate a deterministic capture artifact:
 
@@ -82,6 +84,12 @@ Assert candidate behavior against a baseline artifact (CI-friendly exit codes):
 
 ```bash
 replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --json
+```
+
+Launch the local UI:
+
+```bash
+replaykit ui --left examples/runs/m2_capture_boundaries.rpk --right examples/runs/m4_diverged_from_m2.rpk
 ```
 
 ## License

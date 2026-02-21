@@ -13,7 +13,7 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - [x] M4: O(n) diff engine + first divergence detection
 - [x] M5: Security redaction defaults and bundle export
 - [x] M6: CLI hardening + CI regression assertions
-- [ ] M7: Local diff UI
+- [x] M7: Local diff UI
 
 ## Current Sprint Tasks
 
@@ -30,8 +30,8 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - [x] Add replay-safe bundle round-trip tests (`M5`)
 - [x] Implement `assert` command behavior-regression exit semantics (`M6`)
 - [x] Add CI-oriented machine-readable assertion output (`M6`)
-- [ ] Implement local Git-diff style UI shell with file loading (`M7`)
-- [ ] Add first-divergence jump and metadata panel workflow (`M7`)
+- [x] Implement local Git-diff style UI shell with file loading (`M7`)
+- [x] Add first-divergence jump and metadata panel workflow (`M7`)
 
 ## Task Log
 
@@ -42,3 +42,4 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - 2026-02-21: Completed M4 O(n) diff engine, first-divergence detection, and CLI diff modes.
 - 2026-02-21: Completed M5 bundle export with default redaction profile and replay-safe bundle validation.
 - 2026-02-21: Completed M6 assert command semantics, JSON output for CI, and CI workflow artifact retention.
+- 2026-02-21: Completed M7 local-first UI server with step list, divergence jump, and metadata panel.
