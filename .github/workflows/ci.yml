@@ -41,3 +41,4 @@ jobs:
         with:
           name: replay-artifacts
           path: runs/
+          if-no-files-found: ignore

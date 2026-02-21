@@ -288,7 +288,9 @@ def ui(
     ),
 ) -> None:
     """Launch local Git-diff style UI for replay artifact inspection."""
-    config = UIServerConfig(host=host, port=port, base_dir=Path.cwd())
+    # Check mode should avoid fixed-port collisions in CI/local test runners.
+    effective_port = 0 if check else port
+    config = UIServerConfig(host=host, port=effective_port, base_dir=Path.cwd())
 
     with start_ui_server(config) as (server, _thread):
         bound_host, bound_port = server.server_address
