@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+runs/
+*.rpk
+*.bundle
