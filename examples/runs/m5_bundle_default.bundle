@@ -1,0 +1,76 @@
+{
+  "checksum": "sha256:f1a77df852171eb710b988cb42551fa335cb3c9bcea484b379dd23eab6c69341",
+  "metadata": {
+    "bundle": true,
+    "created_at": "2026-02-21T20:00:00.000000Z",
+    "redaction_policy_version": "1.0",
+    "redaction_profile": "default",
+    "run_id": "run-m5-source-001",
+    "source_run_id": "run-m5-source-001"
+  },
+  "payload": {
+    "run": {
+      "environment_fingerprint": {
+        "cwd": "/Users/alice/replaykit",
+        "os": "macOS",
+        "owner_email": "[REDACTED]"
+      },
+      "id": "run-m5-source-001",
+      "runtime_versions": {
+        "python": "3.12.1",
+        "replaykit": "0.1.0"
+      },
+      "steps": [
+        {
+          "hash": "sha256:cbc58949c43b3e1adc4add6eca04fbde75f6a033c874a5be7e68b232a517af8e",
+          "id": "step-001",
+          "input": {
+            "body": {
+              "card_number": "[REDACTED]",
+              "email": "[REDACTED]",
+              "token": "[REDACTED]"
+            },
+            "headers": {
+              "Authorization": "[REDACTED]",
+              "X-Api-Key": "[REDACTED]"
+            },
+            "method": "POST",
+            "url": "https://api.example.com/v1/payments"
+          },
+          "metadata": {
+            "provider": "payments",
+            "secret": "[REDACTED]"
+          },
+          "output": {
+            "status": "sent"
+          },
+          "type": "tool.request"
+        },
+        {
+          "hash": "sha256:f6acc0c2d3de8d3240ee3e9ae5aac5c571cb253a9aaeec794d4bdac3d025cf0e",
+          "id": "step-002",
+          "input": {
+            "method": "POST",
+            "url": "https://api.example.com/v1/payments"
+          },
+          "metadata": {
+            "provider": "payments"
+          },
+          "output": {
+            "body": {
+              "ok": true,
+              "receipt_email": "[REDACTED]"
+            },
+            "headers": {
+              "Set-Cookie": "[REDACTED]"
+            },
+            "status_code": 200
+          },
+          "type": "tool.response"
+        }
+      ],
+      "timestamp": "2026-02-21T20:00:00.000000Z"
+    }
+  },
+  "version": "1.0"
+}

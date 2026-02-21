@@ -3,7 +3,7 @@ from pathlib import Path
 
 import typer
 
-from replaypack.artifact import ArtifactError, read_artifact, write_artifact
+from replaypack.artifact import ArtifactError, read_artifact, write_artifact, write_bundle_artifact
 from replaypack.capture import build_demo_run
 from replaypack.diff import diff_runs, render_diff_summary, render_first_divergence
 from replaypack.replay import ReplayConfig, ReplayError, write_replay_stub_artifact
@@ -126,9 +126,44 @@ def diff(
 
 
 @app.command()
-def bundle() -> None:
-    """Bundle and redact a run artifact (stub)."""
-    typer.echo("bundle: not implemented yet")
+def bundle(
+    artifact: Path = typer.Argument(..., help="Path to source .rpk artifact."),
+    out: Path = typer.Option(
+        Path("runs/incident.bundle"),
+        "--out",
+        help="Output path for bundled artifact.",
+    ),
+    redact: str = typer.Option(
+        "default",
+        "--redact",
+        help="Redaction profile: default or none.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable bundle summary.",
+    ),
+) -> None:
+    """Bundle and redact a run artifact."""
+    try:
+        envelope = write_bundle_artifact(artifact, out, redaction_profile=redact)
+    except (ArtifactError, FileNotFoundError) as error:
+        typer.echo(f"bundle failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    summary = {
+        "mode": "bundle",
+        "source_run_id": envelope["metadata"]["source_run_id"],
+        "bundle_run_id": envelope["payload"]["run"]["id"],
+        "steps": len(envelope["payload"]["run"]["steps"]),
+        "redaction_profile": envelope["metadata"]["redaction_profile"],
+        "out": str(out),
+    }
+
+    if json_output:
+        typer.echo(json.dumps(summary, ensure_ascii=True, sort_keys=True))
+    else:
+        typer.echo(f"bundle artifact: {out}")
 
 
 @app.command(name="assert")

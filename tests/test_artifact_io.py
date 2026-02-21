@@ -134,3 +134,20 @@ def test_diff_fixture_is_valid() -> None:
     assert run.id == "run-m2-example-001"
     assert run.steps[2].input["args"] == ["forecast"]
     assert run.steps[2].metadata["tool"] == "search-v2"
+
+
+def test_m5_source_fixture_is_valid() -> None:
+    fixture_path = Path("examples/runs/m5_source_unredacted.rpk")
+    run = read_artifact(fixture_path)
+
+    assert run.id == "run-m5-source-001"
+    assert run.steps[0].input["body"]["email"] == "customer@example.com"
+
+
+def test_m5_bundle_fixture_is_valid() -> None:
+    fixture_path = Path("examples/runs/m5_bundle_default.bundle")
+    run = read_artifact(fixture_path)
+
+    assert run.id == "run-m5-source-001"
+    assert run.steps[0].input["body"]["email"] == "[REDACTED]"
+    assert run.steps[0].input["headers"]["Authorization"] == "[REDACTED]"

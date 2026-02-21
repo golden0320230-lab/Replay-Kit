@@ -14,3 +14,4 @@ runs/
 !examples/
 !examples/runs/
 !examples/runs/*.rpk
+!examples/runs/*.bundle

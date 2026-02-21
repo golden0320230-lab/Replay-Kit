@@ -11,3 +11,7 @@ class ArtifactValidationError(ArtifactError):
 
 class ArtifactChecksumError(ArtifactError):
     """Artifact checksum mismatch."""
+
+
+class ArtifactRedactionProfileError(ArtifactError):
+    """Invalid bundle redaction profile."""

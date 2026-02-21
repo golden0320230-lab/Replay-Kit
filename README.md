@@ -52,6 +52,7 @@ pyproject.toml        Package metadata and CLI entrypoint
 - `M2` complete: capture engine boundaries (model/tool/http) with policy-driven redaction.
 - `M3` complete: offline stub replay with deterministic seed/clock controls.
 - `M4` complete: O(n) diff engine with first-divergence detection and CLI rendering.
+- `M5` complete: redacted bundle export profiles with replay-safe bundle round-trip.
 
 Generate a deterministic capture artifact:
 
@@ -69,6 +70,12 @@ Diff two artifacts and stop at first divergence:
 
 ```bash
 replaykit diff runs/demo-recording.rpk runs/replay-output.rpk --first-divergence
+```
+
+Export a shareable redacted bundle:
+
+```bash
+replaykit bundle runs/demo-recording.rpk --out runs/incident.bundle --redact default
 ```
 
 ## License
