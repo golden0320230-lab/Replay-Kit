@@ -48,7 +48,14 @@ pyproject.toml        Package metadata and CLI entrypoint
 
 ## Current Status
 
-This commit provides initial repository scaffolding, baseline architecture documentation, and a task tracker for incremental delivery.
+- `M1` is complete: deterministic artifact schema, canonicalization, and hashing.
+- `M2` capture engine is in progress with model/tool/HTTP wrappers and policy-based redaction.
+
+You can generate a deterministic demo capture artifact with:
+
+```bash
+replaykit record --out runs/demo-recording.rpk
+```
 
 ## License
 

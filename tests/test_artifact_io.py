@@ -100,3 +100,18 @@ def test_example_fixture_is_valid() -> None:
 
     assert run.id == "run-example-001"
     assert len(run.steps) == 2
+
+
+def test_capture_fixture_is_valid() -> None:
+    fixture_path = Path("examples/runs/m2_capture_boundaries.rpk")
+    run = read_artifact(fixture_path)
+
+    assert run.id == "run-m2-example-001"
+    assert [step.type for step in run.steps] == [
+        "model.request",
+        "model.response",
+        "tool.request",
+        "tool.response",
+        "tool.request",
+        "tool.response",
+    ]

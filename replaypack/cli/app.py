@@ -1,12 +1,34 @@
+from pathlib import Path
+
 import typer
+
+from replaypack.artifact import write_artifact
+from replaypack.capture import build_demo_run
 
 app = typer.Typer(help="ReplayKit CLI")
 
 
 @app.command()
-def record() -> None:
-    """Record an execution run (stub)."""
-    typer.echo("record: not implemented yet")
+def record(
+    out: Path = typer.Option(
+        Path("runs/demo-recording.rpk"),
+        "--out",
+        help="Output path for the recorded artifact.",
+    ),
+    demo: bool = typer.Option(
+        True,
+        "--demo/--no-demo",
+        help="Use the built-in deterministic demo capture workflow.",
+    ),
+) -> None:
+    """Record an execution run."""
+    if not demo:
+        typer.echo("record: only --demo is supported in M2")
+        raise typer.Exit(code=2)
+
+    run = build_demo_run()
+    write_artifact(run, out)
+    typer.echo(f"recorded artifact: {out}")
 
 
 @app.command()
