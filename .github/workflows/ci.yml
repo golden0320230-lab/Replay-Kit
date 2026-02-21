@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test-and-assert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Test
+        run: |
+          python -m pytest -q
+
+      - name: Replay Assertion
+        run: |
+          mkdir -p runs
+          python -m replaypack assert examples/runs/m2_capture_boundaries.rpk \
+            --candidate examples/runs/m2_capture_boundaries.rpk \
+            --json > runs/ci-assert.json
+          echo "CI assertion output written to runs/ci-assert.json"
+
+      - name: Upload Replay Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-artifacts
+          path: runs/

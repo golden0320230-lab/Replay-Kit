@@ -5,7 +5,7 @@ import typer
 
 from replaypack.artifact import ArtifactError, read_artifact, write_artifact, write_bundle_artifact
 from replaypack.capture import build_demo_run
-from replaypack.diff import diff_runs, render_diff_summary, render_first_divergence
+from replaypack.diff import assert_runs, diff_runs, render_diff_summary, render_first_divergence
 from replaypack.replay import ReplayConfig, ReplayError, write_replay_stub_artifact
 
 app = typer.Typer(help="ReplayKit CLI")
@@ -167,9 +167,88 @@ def bundle(
 
 
 @app.command(name="assert")
-def assert_run() -> None:
-    """Assert behavior against baseline (stub)."""
-    typer.echo("assert: not implemented yet")
+def assert_run(
+    baseline: Path = typer.Argument(..., help="Path to baseline .rpk artifact."),
+    candidate: Path | None = typer.Option(
+        None,
+        "--candidate",
+        "-c",
+        help="Path to candidate .rpk artifact to compare against baseline.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable assertion output.",
+    ),
+    max_changes: int = typer.Option(
+        8,
+        "--max-changes",
+        help="Maximum number of field-level changes to print in text mode.",
+    ),
+) -> None:
+    """Assert candidate behavior matches baseline artifact."""
+    if candidate is None:
+        message = (
+            "assert failed: missing candidate artifact. "
+            "Provide --candidate PATH."
+        )
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"status": "error", "exit_code": 1, "message": message},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        baseline_run = read_artifact(baseline)
+        candidate_run = read_artifact(candidate)
+    except (ArtifactError, FileNotFoundError) as error:
+        message = f"assert failed: {error}"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"status": "error", "exit_code": 1, "message": message},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    result = assert_runs(
+        baseline_run,
+        candidate_run,
+        max_changes_per_step=max(1, max_changes),
+    )
+
+    payload = result.to_dict()
+    payload["baseline_path"] = str(baseline)
+    payload["candidate_path"] = str(candidate)
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    else:
+        if result.passed:
+            typer.echo(
+                "assert passed: "
+                f"baseline={baseline} candidate={candidate}"
+            )
+        else:
+            typer.echo(
+                "assert failed: divergence detected "
+                f"(baseline={baseline} candidate={candidate})"
+            )
+        typer.echo(render_diff_summary(result.diff))
+        typer.echo(render_first_divergence(result.diff, max_changes=max_changes))
+
+    if not result.passed:
+        raise typer.Exit(code=result.exit_code)
 
 
 @app.command()

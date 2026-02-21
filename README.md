@@ -78,6 +78,12 @@ Export a shareable redacted bundle:
 replaykit bundle runs/demo-recording.rpk --out runs/incident.bundle --redact default
 ```
 
+Assert candidate behavior against a baseline artifact (CI-friendly exit codes):
+
+```bash
+replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --json
+```
+
 ## License
 
 MIT

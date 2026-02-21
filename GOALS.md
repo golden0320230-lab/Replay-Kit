@@ -12,7 +12,7 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - [x] M3: Offline stub replay
 - [x] M4: O(n) diff engine + first divergence detection
 - [x] M5: Security redaction defaults and bundle export
-- [ ] M6: CLI hardening + CI regression assertions
+- [x] M6: CLI hardening + CI regression assertions
 - [ ] M7: Local diff UI
 
 ## Current Sprint Tasks
@@ -28,8 +28,10 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - [x] Add CLI diff output with first divergence context (`M4`)
 - [x] Implement bundle export with default redaction profiles (`M5`)
 - [x] Add replay-safe bundle round-trip tests (`M5`)
-- [ ] Implement `assert` command behavior-regression exit semantics (`M6`)
-- [ ] Add CI-oriented machine-readable assertion output (`M6`)
+- [x] Implement `assert` command behavior-regression exit semantics (`M6`)
+- [x] Add CI-oriented machine-readable assertion output (`M6`)
+- [ ] Implement local Git-diff style UI shell with file loading (`M7`)
+- [ ] Add first-divergence jump and metadata panel workflow (`M7`)
 
 ## Task Log
 
@@ -39,3 +41,4 @@ Build a plug-and-play, cross-platform debugging system for AI workflows that pro
 - 2026-02-21: Completed M3 offline stub replay engine with deterministic seed/clock controls and replay CLI.
 - 2026-02-21: Completed M4 O(n) diff engine, first-divergence detection, and CLI diff modes.
 - 2026-02-21: Completed M5 bundle export with default redaction profile and replay-safe bundle validation.
+- 2026-02-21: Completed M6 assert command semantics, JSON output for CI, and CI workflow artifact retention.
