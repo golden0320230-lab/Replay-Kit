@@ -11,3 +11,6 @@ venv/
 runs/
 *.rpk
 *.bundle
+!examples/
+!examples/runs/
+!examples/runs/*.rpk

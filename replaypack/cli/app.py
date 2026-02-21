@@ -27,7 +27,7 @@ def bundle() -> None:
     typer.echo("bundle: not implemented yet")
 
 
-@app.command()
+@app.command(name="assert")
 def assert_run() -> None:
     """Assert behavior against baseline (stub)."""
     typer.echo("assert: not implemented yet")
