@@ -62,6 +62,7 @@ from replaypack.performance import (
     evaluate_slowdown_gate,
     run_benchmark_suite,
 )
+from replaypack.live_demo import build_live_demo_run
 from replaypack.snapshot import (
     SnapshotConfigError,
     assert_snapshot_artifact,
@@ -1146,6 +1147,75 @@ def live_compare(
 
     if not result.passed:
         raise typer.Exit(code=result.exit_code)
+
+
+@app.command(name="live-demo")
+def live_demo(
+    out: Path = typer.Option(
+        Path("runs/live-demo.rpk"),
+        "--out",
+        help="Output path for generated live-demo artifact.",
+    ),
+    provider: str = typer.Option(
+        "fake",
+        "--provider",
+        help="Live-demo provider backend. Currently supported: fake.",
+    ),
+    stream: bool = typer.Option(
+        False,
+        "--stream/--no-stream",
+        help="Capture fake provider in streaming mode.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable live-demo output.",
+    ),
+) -> None:
+    """Generate a local provider-shaped capture artifact without target app wiring."""
+    normalized_provider = provider.strip().lower()
+    if normalized_provider != "fake":
+        message = (
+            f"live-demo failed: unsupported provider '{provider}'. Expected fake."
+        )
+        if json_output:
+            _echo_json({"status": "error", "exit_code": 2, "message": message})
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    try:
+        run = build_live_demo_run(provider=normalized_provider, stream=stream)
+        write_artifact(
+            run,
+            out,
+            metadata={
+                "mode": "live-demo",
+                "provider": normalized_provider,
+                "stream": stream,
+            },
+        )
+    except (ArtifactError, ValueError) as error:
+        message = f"live-demo failed: {error}"
+        if json_output:
+            _echo_json({"status": "error", "exit_code": 1, "message": message})
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "provider": normalized_provider,
+        "stream": stream,
+        "out": str(out),
+        "run_id": run.id,
+        "steps": len(run.steps),
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(f"live-demo artifact: {out}")
 
 
 @app.command()
