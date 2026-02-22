@@ -1,4 +1,5 @@
 import json
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 import runpy
 import sys
@@ -91,6 +92,22 @@ class _RecordTargetInvocation:
     args: tuple[str, ...]
 
 
+def _resolve_cli_version() -> str:
+    try:
+        return package_version("replaykit")
+    except PackageNotFoundError:
+        from replaypack import __version__ as local_version
+
+        return local_version
+
+
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(_resolve_cli_version(), color=False)
+    raise typer.Exit()
+
+
 def _load_redaction_policy(config_path: Path | None) -> RedactionPolicy | None:
     if config_path is None:
         return None
@@ -104,6 +121,13 @@ def _load_redaction_policy(config_path: Path | None) -> RedactionPolicy | None:
 
 @app.callback()
 def app_options(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show ReplayKit version and exit.",
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
