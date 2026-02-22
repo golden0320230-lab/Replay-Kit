@@ -28,6 +28,7 @@ replaykit diff runs/a.rpk runs/b.rpk --first-divergence
 replaykit bundle runs/a.rpk --redact default --out incident.bundle
 replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
+replaykit live-compare baseline.rpk --live-demo
 replaykit ui
 ```
 
@@ -102,6 +103,12 @@ Assert candidate behavior against a baseline artifact (CI-friendly exit codes):
 
 ```bash
 replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --json
+```
+
+Run live compare against baseline (generate a live demo run and diff/assert it):
+
+```bash
+replaykit live-compare runs/baseline.rpk --live-demo --out runs/live-candidate.rpk --json
 ```
 
 Enable strict drift checks (environment/runtime metadata + step metadata):

@@ -609,6 +609,145 @@ def assert_run(
         raise typer.Exit(code=1)
 
 
+@app.command(name="live-compare")
+def live_compare(
+    baseline: Path = typer.Argument(..., help="Path to baseline .rpk artifact."),
+    candidate: Path | None = typer.Option(
+        None,
+        "--candidate",
+        "-c",
+        help="Optional candidate .rpk artifact path (if omitted, --live-demo is used).",
+    ),
+    out: Path = typer.Option(
+        Path("runs/live-compare-candidate.rpk"),
+        "--out",
+        help="Output path when generating live demo candidate artifact.",
+    ),
+    live_demo: bool = typer.Option(
+        True,
+        "--live-demo/--no-live-demo",
+        help="Generate candidate via built-in deterministic demo capture.",
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help=(
+            "Enable strict drift checks: environment/runtime mismatch and "
+            "per-step metadata drift."
+        ),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable live-compare output.",
+    ),
+    max_changes: int = typer.Option(
+        8,
+        "--max-changes",
+        help="Maximum number of field-level changes to print in text mode.",
+    ),
+) -> None:
+    """Run live execution and compare against a baseline artifact."""
+    if candidate is None and not live_demo:
+        message = (
+            "live-compare failed: missing live input. "
+            "Provide --candidate PATH or enable --live-demo."
+        )
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"status": "error", "exit_code": 2, "message": message},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    try:
+        baseline_run = read_artifact(baseline)
+    except (ArtifactError, FileNotFoundError) as error:
+        message = f"live-compare failed: {error}"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"status": "error", "exit_code": 1, "message": message},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    live_mode = "artifact"
+    candidate_path = candidate
+    try:
+        if candidate is not None:
+            candidate_run = read_artifact(candidate)
+        else:
+            live_run = build_demo_run()
+            write_artifact(
+                live_run,
+                out,
+                metadata={
+                    "mode": "live-compare-demo",
+                    "baseline_run_id": baseline_run.id,
+                },
+            )
+            candidate_run = live_run.with_hashed_steps()
+            candidate_path = out
+            live_mode = "demo"
+    except (ArtifactError, FileNotFoundError) as error:
+        message = f"live-compare failed: {error}"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"status": "error", "exit_code": 1, "message": message},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    result = assert_runs(
+        baseline_run,
+        candidate_run,
+        strict=strict,
+        max_changes_per_step=max(1, max_changes),
+    )
+
+    payload = result.to_dict()
+    payload["baseline_path"] = str(baseline)
+    payload["candidate_path"] = str(candidate_path)
+    payload["live_mode"] = live_mode
+    payload["exit_code"] = result.exit_code
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    else:
+        if result.passed:
+            mode = "live-compare passed (strict)" if strict else "live-compare passed"
+            typer.echo(f"{mode}: baseline={baseline} candidate={candidate_path}")
+        else:
+            if strict and result.strict_failures and result.diff.identical:
+                message = "live-compare failed: strict drift detected"
+            else:
+                message = "live-compare failed: divergence detected"
+            typer.echo(f"{message} (baseline={baseline} candidate={candidate_path})")
+        typer.echo(render_diff_summary(result.diff))
+        typer.echo(render_first_divergence(result.diff, max_changes=max_changes))
+        strict_summary = _render_strict_failures(result, max_changes=max_changes)
+        if strict_summary:
+            typer.echo(strict_summary)
+
+    if not result.passed:
+        raise typer.Exit(code=result.exit_code)
+
+
 @app.command()
 def ui(
     host: str = typer.Option(
