@@ -36,6 +36,7 @@ packages = [
   "replaypack.artifact",
   "replaypack.replay",
   "replaypack.diff",
+  "replaypack.plugins",
   "replaypack.cli",
   "replaypack.ui",
 ]

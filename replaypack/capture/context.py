@@ -14,6 +14,13 @@ from typing import Any, Iterator
 from replaypack.capture.policy import InterceptionPolicy
 from replaypack.capture.redaction import DEFAULT_REDACTION_POLICY, RedactionPolicy, redact_payload
 from replaypack.core.models import Run, Step
+from replaypack.plugins import (
+    CaptureEndEvent,
+    CaptureStartEvent,
+    CaptureStepEvent,
+    PluginManager,
+    get_active_plugin_manager,
+)
 
 _CURRENT_CONTEXT: ContextVar["CaptureContext | None"] = ContextVar(
     "replaypack_current_capture_context", default=None
@@ -30,6 +37,7 @@ class CaptureContext:
     runtime_versions: dict[str, Any]
     policy: InterceptionPolicy = field(default_factory=InterceptionPolicy)
     redaction_policy: RedactionPolicy = field(default_factory=lambda: DEFAULT_REDACTION_POLICY)
+    plugin_manager: PluginManager = field(default_factory=get_active_plugin_manager)
     steps: list[Step] = field(default_factory=list)
     _counter: int = 0
     _lock: threading.RLock = field(
@@ -49,6 +57,7 @@ class CaptureContext:
         runtime_versions: dict[str, Any] | None = None,
         policy: InterceptionPolicy | None = None,
         redaction_policy: RedactionPolicy | None = None,
+        plugin_manager: PluginManager | None = None,
     ) -> "CaptureContext":
         return cls(
             run_id=run_id,
@@ -57,6 +66,7 @@ class CaptureContext:
             runtime_versions=runtime_versions or _default_runtime_versions(),
             policy=policy or InterceptionPolicy(),
             redaction_policy=redaction_policy or DEFAULT_REDACTION_POLICY,
+            plugin_manager=plugin_manager or get_active_plugin_manager(),
         )
 
     def record_step(
@@ -77,6 +87,14 @@ class CaptureContext:
                 metadata=redact_payload(metadata or {}, policy=self.redaction_policy),
             ).with_hash()
             self.steps.append(step)
+            self.plugin_manager.on_capture_step(
+                CaptureStepEvent(
+                    run_id=self.run_id,
+                    step_id=step.id,
+                    step_type=step.type,
+                    metadata=dict(step.metadata),
+                )
+            )
             return step
 
     def to_run(self) -> Run:
@@ -103,6 +121,7 @@ def capture_run(
     runtime_versions: dict[str, Any] | None = None,
     policy: InterceptionPolicy | None = None,
     redaction_policy: RedactionPolicy | None = None,
+    plugin_manager: PluginManager | None = None,
 ) -> Iterator[CaptureContext]:
     # Nested capture scopes are supported with stack semantics: the inner scope
     # becomes current for its duration, then the previous context is restored.
@@ -113,11 +132,32 @@ def capture_run(
         runtime_versions=runtime_versions,
         policy=policy,
         redaction_policy=redaction_policy,
+        plugin_manager=plugin_manager,
     )
     token = _CURRENT_CONTEXT.set(context)
+    context.plugin_manager.on_capture_start(
+        CaptureStartEvent(run_id=context.run_id, timestamp=context.timestamp)
+    )
+    status = "ok"
+    error_type: str | None = None
+    error_message: str | None = None
     try:
         yield context
+    except Exception as error:
+        status = "error"
+        error_type = error.__class__.__name__
+        error_message = str(error)
+        raise
     finally:
+        context.plugin_manager.on_capture_end(
+            CaptureEndEvent(
+                run_id=context.run_id,
+                step_count=len(context.steps),
+                status=status,
+                error_type=error_type,
+                error_message=error_message,
+            )
+        )
         _CURRENT_CONTEXT.reset(token)
 
 

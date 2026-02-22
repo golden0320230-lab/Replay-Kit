@@ -18,6 +18,7 @@ ReplayKit is designed to answer one question quickly:
 - Provider-agnostic capture and replay
 - Cross-platform behavior (macOS, Linux, Windows)
 - Security-first redaction defaults
+- Versioned plugin hooks for capture/replay/diff lifecycle
 
 ## Planned CLI Surface
 
@@ -175,6 +176,24 @@ Launch the local UI:
 
 ```bash
 replaykit ui --left examples/runs/m2_capture_boundaries.rpk --right examples/runs/m4_diverged_from_m2.rpk
+```
+
+Activate lifecycle plugins with a versioned plugin config:
+
+```bash
+cat > plugins.json <<'JSON'
+{
+  "config_version": 1,
+  "plugins": [
+    {
+      "entrypoint": "replaypack.plugins.reference:LifecycleTracePlugin",
+      "options": {"output_path": "runs/plugins/lifecycle.ndjson"}
+    }
+  ]
+}
+JSON
+
+REPLAYKIT_PLUGIN_CONFIG=plugins.json replaykit diff runs/demo-recording.rpk runs/replay-output.rpk --json
 ```
 
 Stable Python API import:

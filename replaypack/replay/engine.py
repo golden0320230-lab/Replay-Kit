@@ -13,6 +13,7 @@ from replaypack.artifact import write_artifact
 from replaypack.core.canonical import canonical_json
 from replaypack.core.models import Run, Step
 from replaypack.core.types import STEP_TYPES
+from replaypack.plugins import ReplayEndEvent, ReplayStartEvent, get_active_plugin_manager
 from replaypack.replay.exceptions import ReplayConfigError
 
 ReplayMode = Literal["stub", "hybrid"]
@@ -89,33 +90,69 @@ def normalize_fixed_clock(value: str) -> str:
 def replay_stub_run(source_run: Run, *, config: ReplayConfig | None = None) -> Run:
     """Build a deterministic offline replay run from a recorded source run."""
     cfg = config or ReplayConfig()
-
-    with deterministic_runtime(seed=cfg.seed), offline_network_guard():
-        replay_steps = _replay_steps_stub(source_run)
-
-    replay_id = _deterministic_stub_replay_id(source_run, cfg)
-
-    environment = {
-        **source_run.environment_fingerprint,
-        "replay_mode": "stub",
-        "replay_offline": True,
-        "source_run_id": source_run.id,
-    }
-
-    runtime = {
-        **source_run.runtime_versions,
-        "replay_mode": "stub",
-        "replay_seed": str(cfg.seed),
-        "replay_fixed_clock": cfg.fixed_clock,
-    }
-
-    return Run(
-        id=replay_id,
-        timestamp=cfg.fixed_clock,
-        environment_fingerprint=environment,
-        runtime_versions=runtime,
-        steps=replay_steps,
+    plugin_manager = get_active_plugin_manager()
+    plugin_manager.on_replay_start(
+        ReplayStartEvent(
+            mode="stub",
+            source_run_id=source_run.id,
+            rerun_from_run_id=None,
+            seed=cfg.seed,
+            fixed_clock=cfg.fixed_clock,
+            source_step_count=len(source_run.steps),
+        )
     )
+
+    try:
+        with deterministic_runtime(seed=cfg.seed), offline_network_guard():
+            replay_steps = _replay_steps_stub(source_run)
+
+        replay_id = _deterministic_stub_replay_id(source_run, cfg)
+
+        environment = {
+            **source_run.environment_fingerprint,
+            "replay_mode": "stub",
+            "replay_offline": True,
+            "source_run_id": source_run.id,
+        }
+
+        runtime = {
+            **source_run.runtime_versions,
+            "replay_mode": "stub",
+            "replay_seed": str(cfg.seed),
+            "replay_fixed_clock": cfg.fixed_clock,
+        }
+
+        replay_run = Run(
+            id=replay_id,
+            timestamp=cfg.fixed_clock,
+            environment_fingerprint=environment,
+            runtime_versions=runtime,
+            steps=replay_steps,
+        )
+    except Exception as error:
+        plugin_manager.on_replay_end(
+            ReplayEndEvent(
+                mode="stub",
+                source_run_id=source_run.id,
+                rerun_from_run_id=None,
+                status="error",
+                error_type=error.__class__.__name__,
+                error_message=str(error),
+            )
+        )
+        raise
+
+    plugin_manager.on_replay_end(
+        ReplayEndEvent(
+            mode="stub",
+            source_run_id=source_run.id,
+            rerun_from_run_id=None,
+            status="ok",
+            replay_run_id=replay_run.id,
+            step_count=len(replay_run.steps),
+        )
+    )
+    return replay_run
 
 
 def replay_hybrid_run(
@@ -128,46 +165,82 @@ def replay_hybrid_run(
     """Build deterministic hybrid replay using rerun boundaries from another run."""
     cfg = config or ReplayConfig()
     effective_policy = policy or HybridReplayPolicy(rerun_step_types=("model.response",))
+    plugin_manager = get_active_plugin_manager()
+    plugin_manager.on_replay_start(
+        ReplayStartEvent(
+            mode="hybrid",
+            source_run_id=source_run.id,
+            rerun_from_run_id=rerun_run.id,
+            seed=cfg.seed,
+            fixed_clock=cfg.fixed_clock,
+            source_step_count=len(source_run.steps),
+        )
+    )
 
-    with deterministic_runtime(seed=cfg.seed), offline_network_guard():
-        replay_steps = _replay_steps_hybrid(
+    try:
+        with deterministic_runtime(seed=cfg.seed), offline_network_guard():
+            replay_steps = _replay_steps_hybrid(
+                source_run=source_run,
+                rerun_run=rerun_run,
+                policy=effective_policy,
+            )
+
+        replay_id = _deterministic_hybrid_replay_id(
             source_run=source_run,
             rerun_run=rerun_run,
+            config=cfg,
+            replay_steps=replay_steps,
             policy=effective_policy,
         )
 
-    replay_id = _deterministic_hybrid_replay_id(
-        source_run=source_run,
-        rerun_run=rerun_run,
-        config=cfg,
-        replay_steps=replay_steps,
-        policy=effective_policy,
+        environment = {
+            **source_run.environment_fingerprint,
+            "replay_mode": "hybrid",
+            "replay_offline": True,
+            "source_run_id": source_run.id,
+            "rerun_from_run_id": rerun_run.id,
+        }
+
+        runtime = {
+            **source_run.runtime_versions,
+            "replay_mode": "hybrid",
+            "replay_seed": str(cfg.seed),
+            "replay_fixed_clock": cfg.fixed_clock,
+            "replay_rerun_step_types": ",".join(effective_policy.rerun_step_types),
+            "replay_rerun_step_ids": ",".join(effective_policy.rerun_step_ids),
+        }
+
+        replay_run = Run(
+            id=replay_id,
+            timestamp=cfg.fixed_clock,
+            environment_fingerprint=environment,
+            runtime_versions=runtime,
+            steps=replay_steps,
+        )
+    except Exception as error:
+        plugin_manager.on_replay_end(
+            ReplayEndEvent(
+                mode="hybrid",
+                source_run_id=source_run.id,
+                rerun_from_run_id=rerun_run.id,
+                status="error",
+                error_type=error.__class__.__name__,
+                error_message=str(error),
+            )
+        )
+        raise
+
+    plugin_manager.on_replay_end(
+        ReplayEndEvent(
+            mode="hybrid",
+            source_run_id=source_run.id,
+            rerun_from_run_id=rerun_run.id,
+            status="ok",
+            replay_run_id=replay_run.id,
+            step_count=len(replay_run.steps),
+        )
     )
-
-    environment = {
-        **source_run.environment_fingerprint,
-        "replay_mode": "hybrid",
-        "replay_offline": True,
-        "source_run_id": source_run.id,
-        "rerun_from_run_id": rerun_run.id,
-    }
-
-    runtime = {
-        **source_run.runtime_versions,
-        "replay_mode": "hybrid",
-        "replay_seed": str(cfg.seed),
-        "replay_fixed_clock": cfg.fixed_clock,
-        "replay_rerun_step_types": ",".join(effective_policy.rerun_step_types),
-        "replay_rerun_step_ids": ",".join(effective_policy.rerun_step_ids),
-    }
-
-    return Run(
-        id=replay_id,
-        timestamp=cfg.fixed_clock,
-        environment_fingerprint=environment,
-        runtime_versions=runtime,
-        steps=replay_steps,
-    )
+    return replay_run
 
 
 def write_replay_stub_artifact(

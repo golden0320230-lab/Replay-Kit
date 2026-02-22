@@ -6,6 +6,7 @@ from typing import Any
 
 from replaypack.core.models import Run, Step
 from replaypack.diff.models import RunDiffResult, StepDiff, ValueChange
+from replaypack.plugins import DiffEndEvent, DiffStartEvent, get_active_plugin_manager
 
 _MISSING = object()
 
@@ -21,34 +22,71 @@ def diff_runs(
 
     Steps are compared by ordered position.
     """
+    plugin_manager = get_active_plugin_manager()
+    plugin_manager.on_diff_start(
+        DiffStartEvent(
+            left_run_id=left.id,
+            right_run_id=right.id,
+            stop_at_first_divergence=stop_at_first_divergence,
+            max_changes_per_step=max_changes_per_step,
+            total_left_steps=len(left.steps),
+            total_right_steps=len(right.steps),
+        )
+    )
+
     left_steps = left.steps
     right_steps = right.steps
     max_len = max(len(left_steps), len(right_steps))
 
     step_diffs: list[StepDiff] = []
 
-    for idx in range(max_len):
-        left_step = left_steps[idx] if idx < len(left_steps) else None
-        right_step = right_steps[idx] if idx < len(right_steps) else None
+    try:
+        for idx in range(max_len):
+            left_step = left_steps[idx] if idx < len(left_steps) else None
+            right_step = right_steps[idx] if idx < len(right_steps) else None
 
-        step_diff = _diff_step(
-            index=idx + 1,
-            left_step=left_step,
-            right_step=right_step,
-            max_changes=max_changes_per_step,
+            step_diff = _diff_step(
+                index=idx + 1,
+                left_step=left_step,
+                right_step=right_step,
+                max_changes=max_changes_per_step,
+            )
+            step_diffs.append(step_diff)
+
+            if stop_at_first_divergence and step_diff.status != "identical":
+                break
+
+        result = RunDiffResult(
+            left_run_id=left.id,
+            right_run_id=right.id,
+            total_left_steps=len(left_steps),
+            total_right_steps=len(right_steps),
+            step_diffs=step_diffs,
         )
-        step_diffs.append(step_diff)
+    except Exception as error:
+        plugin_manager.on_diff_end(
+            DiffEndEvent(
+                left_run_id=left.id,
+                right_run_id=right.id,
+                status="error",
+                error_type=error.__class__.__name__,
+                error_message=str(error),
+            )
+        )
+        raise
 
-        if stop_at_first_divergence and step_diff.status != "identical":
-            break
-
-    return RunDiffResult(
-        left_run_id=left.id,
-        right_run_id=right.id,
-        total_left_steps=len(left_steps),
-        total_right_steps=len(right_steps),
-        step_diffs=step_diffs,
+    first = result.first_divergence
+    plugin_manager.on_diff_end(
+        DiffEndEvent(
+            left_run_id=left.id,
+            right_run_id=right.id,
+            status="ok",
+            identical=result.identical,
+            first_divergence_index=first.index if first is not None else None,
+            summary=result.summary(),
+        )
     )
+    return result
 
 
 def _diff_step(
