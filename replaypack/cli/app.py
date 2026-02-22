@@ -38,6 +38,11 @@ from replaypack.replay import (
     write_replay_hybrid_artifact,
     write_replay_stub_artifact,
 )
+from replaypack.snapshot import (
+    SnapshotConfigError,
+    assert_snapshot_artifact,
+    update_snapshot_artifact,
+)
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
@@ -745,6 +750,110 @@ def live_compare(
             typer.echo(strict_summary)
 
     if not result.passed:
+        raise typer.Exit(code=result.exit_code)
+
+
+@app.command()
+def snapshot(
+    name: str = typer.Argument(..., help="Snapshot name (stored as <name>.rpk)."),
+    candidate: Path = typer.Option(
+        ...,
+        "--candidate",
+        "-c",
+        help="Candidate .rpk artifact path.",
+    ),
+    snapshots_dir: Path = typer.Option(
+        Path("snapshots"),
+        "--snapshots-dir",
+        help="Directory containing snapshot baseline artifacts.",
+    ),
+    update: bool = typer.Option(
+        False,
+        "--update",
+        help="Create/update baseline from candidate artifact.",
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help=(
+            "Enable strict drift checks: environment/runtime mismatch and "
+            "per-step metadata drift (assert mode only)."
+        ),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable snapshot output.",
+    ),
+    max_changes: int = typer.Option(
+        8,
+        "--max-changes",
+        help="Maximum number of field-level changes to print in text mode.",
+    ),
+) -> None:
+    """Create/update or assert artifact snapshots for regression testing."""
+    try:
+        if update:
+            result = update_snapshot_artifact(
+                snapshot_name=name,
+                candidate_path=candidate,
+                snapshots_dir=snapshots_dir,
+            )
+        else:
+            result = assert_snapshot_artifact(
+                snapshot_name=name,
+                candidate_path=candidate,
+                snapshots_dir=snapshots_dir,
+                strict=strict,
+                max_changes_per_step=max(1, max_changes),
+            )
+    except (SnapshotConfigError, ArtifactError, FileNotFoundError) as error:
+        message = f"snapshot failed: {error}"
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "action": "update" if update else "assert",
+            "snapshot_name": name,
+            "candidate_path": str(candidate),
+            "baseline_path": str(snapshots_dir),
+            "message": message,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    payload = result.to_dict()
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    else:
+        if result.status == "updated":
+            typer.echo(
+                "snapshot updated: "
+                f"name={name} baseline={result.baseline_path} source={result.candidate_path}"
+            )
+        elif result.status == "pass":
+            typer.echo(
+                "snapshot passed: "
+                f"name={name} baseline={result.baseline_path} candidate={result.candidate_path}"
+            )
+        elif result.status == "fail":
+            typer.echo(
+                "snapshot failed: "
+                f"name={name} baseline={result.baseline_path} candidate={result.candidate_path}"
+            )
+        else:
+            typer.echo(f"snapshot failed: {result.message}", err=True)
+
+        if result.assertion is not None:
+            typer.echo(render_diff_summary(result.assertion.diff))
+            typer.echo(render_first_divergence(result.assertion.diff, max_changes=max_changes))
+            strict_summary = _render_strict_failures(result.assertion, max_changes=max_changes)
+            if strict_summary:
+                typer.echo(strict_summary)
+
+    if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)
 
 

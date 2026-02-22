@@ -19,6 +19,11 @@ from replaypack.replay import (
     write_replay_hybrid_artifact,
     write_replay_stub_artifact,
 )
+from replaypack.snapshot import (
+    SnapshotWorkflowResult,
+    assert_snapshot_artifact,
+    update_snapshot_artifact,
+)
 
 __version__ = "0.1.0"
 
@@ -184,14 +189,53 @@ def bundle(
     return write_bundle_artifact(path, out, redaction_profile=redaction_profile)
 
 
+def snapshot_assert(
+    name: str,
+    candidate: str | Path,
+    *,
+    snapshots_dir: str | Path = "snapshots",
+    update: bool = False,
+    strict: bool = False,
+    max_changes_per_step: int = 32,
+) -> SnapshotWorkflowResult:
+    """Run snapshot update/assert workflow for a candidate artifact.
+
+    Args:
+        name: Snapshot baseline name (stored as `<name>.rpk`).
+        candidate: Candidate artifact path.
+        snapshots_dir: Baseline snapshot directory.
+        update: If true, create/update baseline from candidate.
+        strict: Strict drift gating when asserting.
+        max_changes_per_step: Max field-level changes in assertion payload.
+
+    Returns:
+        Snapshot workflow result model.
+    """
+    if update:
+        return update_snapshot_artifact(
+            snapshot_name=name,
+            candidate_path=candidate,
+            snapshots_dir=snapshots_dir,
+        )
+    return assert_snapshot_artifact(
+        snapshot_name=name,
+        candidate_path=candidate,
+        snapshots_dir=snapshots_dir,
+        strict=strict,
+        max_changes_per_step=max_changes_per_step,
+    )
+
+
 __all__ = [
     "__version__",
     "ReplayMode",
     "AssertionResult",
     "RunDiffResult",
+    "SnapshotWorkflowResult",
     "record",
     "replay",
     "diff",
     "assert_run",
     "bundle",
+    "snapshot_assert",
 ]

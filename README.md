@@ -29,6 +29,7 @@ replaykit bundle runs/a.rpk --redact default --out incident.bundle
 replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
 replaykit live-compare baseline.rpk --live-demo
+replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit ui
 ```
 
@@ -109,6 +110,13 @@ Run live compare against baseline (generate a live demo run and diff/assert it):
 
 ```bash
 replaykit live-compare runs/baseline.rpk --live-demo --out runs/live-candidate.rpk --json
+```
+
+Create/update and assert a snapshot baseline artifact:
+
+```bash
+replaykit snapshot my-flow --candidate runs/candidate.rpk --snapshots-dir snapshots --update
+replaykit snapshot my-flow --candidate runs/candidate.rpk --snapshots-dir snapshots --json
 ```
 
 Enable strict drift checks (environment/runtime metadata + step metadata):
