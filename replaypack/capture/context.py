@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import os
 import platform
+import threading
 from typing import Any, Iterator
 
 from replaypack.capture.policy import InterceptionPolicy
@@ -31,6 +32,12 @@ class CaptureContext:
     redaction_policy: RedactionPolicy = field(default_factory=lambda: DEFAULT_REDACTION_POLICY)
     steps: list[Step] = field(default_factory=list)
     _counter: int = 0
+    _lock: threading.RLock = field(
+        default_factory=threading.RLock,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def create(
@@ -60,25 +67,27 @@ class CaptureContext:
         output_payload: Any,
         metadata: dict[str, Any] | None = None,
     ) -> Step:
-        self._counter += 1
-        step = Step(
-            id=f"step-{self._counter:06d}",
-            type=step_type,
-            input=redact_payload(input_payload, policy=self.redaction_policy),
-            output=redact_payload(output_payload, policy=self.redaction_policy),
-            metadata=redact_payload(metadata or {}, policy=self.redaction_policy),
-        ).with_hash()
-        self.steps.append(step)
-        return step
+        with self._lock:
+            self._counter += 1
+            step = Step(
+                id=f"step-{self._counter:06d}",
+                type=step_type,
+                input=redact_payload(input_payload, policy=self.redaction_policy),
+                output=redact_payload(output_payload, policy=self.redaction_policy),
+                metadata=redact_payload(metadata or {}, policy=self.redaction_policy),
+            ).with_hash()
+            self.steps.append(step)
+            return step
 
     def to_run(self) -> Run:
-        return Run(
-            id=self.run_id,
-            timestamp=self.timestamp,
-            environment_fingerprint=self.environment_fingerprint,
-            runtime_versions=self.runtime_versions,
-            steps=list(self.steps),
-        )
+        with self._lock:
+            return Run(
+                id=self.run_id,
+                timestamp=self.timestamp,
+                environment_fingerprint=dict(self.environment_fingerprint),
+                runtime_versions=dict(self.runtime_versions),
+                steps=list(self.steps),
+            )
 
 
 def get_current_context() -> CaptureContext | None:
@@ -95,6 +104,8 @@ def capture_run(
     policy: InterceptionPolicy | None = None,
     redaction_policy: RedactionPolicy | None = None,
 ) -> Iterator[CaptureContext]:
+    # Nested capture scopes are supported with stack semantics: the inner scope
+    # becomes current for its duration, then the previous context is restored.
     context = CaptureContext.create(
         run_id=run_id,
         timestamp=timestamp,

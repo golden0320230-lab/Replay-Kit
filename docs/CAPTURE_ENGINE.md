@@ -57,7 +57,16 @@ HTTP bodies are omitted by default (`capture_http_bodies=False`) to reduce leaka
 
 - step IDs are monotonic (`step-000001`, ...)
 - step hashes are computed deterministically with volatile metadata excluded
-- emitted step order matches boundary invocation order
+- concurrent `record_step` writes are serialized for stable, gap-free step IDs
+
+## Context Scope Semantics
+
+- `capture_run(...)` uses stack semantics for nesting:
+  - entering inner scope activates inner context
+  - exiting inner scope restores previous outer context
+- Async tasks can safely run independent capture scopes without cross-run leakage.
+- New OS threads do not inherit active capture context automatically.
+  - For shared threaded capture, pass `context=...` explicitly to capture wrappers.
 
 ## Current Limits
 
