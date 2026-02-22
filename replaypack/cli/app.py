@@ -10,13 +10,19 @@ import typer
 from replaypack.artifact import (
     ArtifactError,
     SIGNING_KEY_ENV_VAR,
+    redact_run_for_bundle,
     read_artifact,
     read_artifact_envelope,
     verify_artifact_signature,
     write_artifact,
     write_bundle_artifact,
 )
-from replaypack.capture import build_demo_run
+from replaypack.capture import (
+    RedactionPolicy,
+    RedactionPolicyConfigError,
+    build_demo_run,
+    load_redaction_policy_from_file,
+)
 from replaypack.core.types import STEP_TYPES
 from replaypack.diff import (
     AssertionResult,
@@ -63,6 +69,17 @@ class _OutputOptions:
 
 
 _OUTPUT_OPTIONS = _OutputOptions()
+
+
+def _load_redaction_policy(config_path: Path | None) -> RedactionPolicy | None:
+    if config_path is None:
+        return None
+    try:
+        return load_redaction_policy_from_file(config_path)
+    except FileNotFoundError as error:
+        raise ArtifactError(f"redaction config not found: {config_path}") from error
+    except RedactionPolicyConfigError as error:
+        raise ArtifactError(str(error)) from error
 
 
 @app.callback()
@@ -165,14 +182,20 @@ def record(
         envvar="REPLAYKIT_SIGNING_KEY_ID",
         help="Optional signing key identifier stored in artifact signature metadata.",
     ),
+    redaction_config: Path | None = typer.Option(
+        None,
+        "--redaction-config",
+        help="Path to JSON redaction policy config.",
+    ),
 ) -> None:
     """Record an execution run."""
     if not demo:
         _echo("record: only --demo is supported in M2", err=True)
         raise typer.Exit(code=2)
 
-    run = build_demo_run()
     try:
+        redaction_policy = _load_redaction_policy(redaction_config)
+        run = build_demo_run(redaction_policy=redaction_policy)
         write_artifact(
             run,
             out,
@@ -391,14 +414,23 @@ def diff(
         "--max-changes",
         help="Maximum number of field-level changes to print in text mode.",
     ),
+    redaction_config: Path | None = typer.Option(
+        None,
+        "--redaction-config",
+        help="Path to JSON redaction policy config applied before diff output.",
+    ),
 ) -> None:
     """Diff two runs and identify first divergence."""
     try:
         left_run = read_artifact(left)
         right_run = read_artifact(right)
+        redaction_policy = _load_redaction_policy(redaction_config)
     except (ArtifactError, FileNotFoundError) as error:
         _echo(f"diff failed: {error}", err=True)
         raise typer.Exit(code=1) from error
+    if redaction_policy is not None:
+        left_run = redact_run_for_bundle(left_run, policy=redaction_policy)
+        right_run = redact_run_for_bundle(right_run, policy=redaction_policy)
 
     result = diff_runs(
         left_run,
@@ -558,13 +590,28 @@ def bundle(
         envvar="REPLAYKIT_SIGNING_KEY_ID",
         help="Optional signing key identifier stored in artifact signature metadata.",
     ),
+    redaction_config: Path | None = typer.Option(
+        None,
+        "--redaction-config",
+        help="Path to JSON redaction policy config.",
+    ),
 ) -> None:
     """Bundle and redact a run artifact."""
+    if redaction_config is not None and redact.strip().lower() != "default":
+        _echo(
+            "bundle failed: --redaction-config can only be used with --redact default.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     try:
+        redaction_policy = _load_redaction_policy(redaction_config)
         envelope = write_bundle_artifact(
             artifact,
             out,
             redaction_profile=redact,
+            redaction_policy=redaction_policy,
+            redaction_profile_label="custom" if redaction_policy is not None else None,
             sign=sign,
             signing_key=signing_key,
             signing_key_id=signing_key_id,

@@ -9,6 +9,7 @@ from replaypack.artifact import (
     write_artifact,
     write_bundle_artifact,
 )
+from replaypack.capture import build_redaction_policy
 from replaypack.core.models import Run, Step
 from replaypack.replay import ReplayConfig, write_replay_stub_artifact
 
@@ -97,6 +98,27 @@ def test_bundle_invalid_profile_fails() -> None:
             "runs/unused.bundle",
             redaction_profile="invalid",
         )
+
+
+def test_bundle_custom_policy_applies_configured_rules(tmp_path: Path) -> None:
+    source = tmp_path / "source.rpk"
+    bundle = tmp_path / "custom.bundle"
+    policy = build_redaction_policy(
+        version="bundle-custom-1",
+        extra_sensitive_field_names=("provider",),
+    )
+
+    write_artifact(_build_secret_run(), source)
+    envelope = write_bundle_artifact(
+        source,
+        bundle,
+        redaction_policy=policy,
+        redaction_profile_label="custom",
+    )
+
+    bundled_run = read_artifact(bundle)
+    assert envelope["metadata"]["redaction_profile"] == "custom"
+    assert bundled_run.steps[0].metadata["provider"] == "[REDACTED]"
 
 
 def test_bundle_is_replay_safe_after_redaction(tmp_path: Path) -> None:

@@ -8,8 +8,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from replaypack.artifact import read_artifact, write_artifact, write_bundle_artifact
-from replaypack.capture import build_demo_run
+from replaypack.artifact import (
+    read_artifact,
+    redact_run_for_bundle,
+    write_artifact,
+    write_bundle_artifact,
+)
+from replaypack.capture import RedactionPolicy, build_demo_run
 from replaypack.diff import assert_runs, diff_runs
 from replaypack.diff.assertion import AssertionResult
 from replaypack.diff.models import RunDiffResult
@@ -36,6 +41,7 @@ def record(
     *,
     mode: ReplayMode = "stub",
     redaction: bool = True,
+    redaction_policy: RedactionPolicy | None = None,
 ) -> dict[str, Any]:
     """Record a run artifact to disk.
 
@@ -56,7 +62,7 @@ def record(
     if not redaction:
         raise ValueError("record(..., redaction=False) is not supported yet")
 
-    run = build_demo_run()
+    run = build_demo_run(redaction_policy=redaction_policy)
     return write_artifact(run, path, metadata={"api": "replaykit.record", "mode": mode})
 
 
@@ -119,6 +125,7 @@ def diff(
     *,
     first_only: bool = False,
     max_changes_per_step: int = 32,
+    redaction_policy: RedactionPolicy | None = None,
 ) -> RunDiffResult:
     """Diff two artifacts and return structured comparison data.
 
@@ -133,6 +140,9 @@ def diff(
     """
     left_run = read_artifact(left)
     right_run = read_artifact(right)
+    if redaction_policy is not None:
+        left_run = redact_run_for_bundle(left_run, policy=redaction_policy)
+        right_run = redact_run_for_bundle(right_run, policy=redaction_policy)
     return diff_runs(
         left_run,
         right_run,
@@ -175,6 +185,7 @@ def bundle(
     *,
     out: str | Path,
     redaction_profile: str = "default",
+    redaction_policy: RedactionPolicy | None = None,
 ) -> dict[str, Any]:
     """Export a bundle artifact using the requested redaction profile.
 
@@ -186,7 +197,13 @@ def bundle(
     Returns:
         Bundle artifact envelope.
     """
-    return write_bundle_artifact(path, out, redaction_profile=redaction_profile)
+    return write_bundle_artifact(
+        path,
+        out,
+        redaction_profile=redaction_profile,
+        redaction_policy=redaction_policy,
+        redaction_profile_label="custom" if redaction_policy is not None else None,
+    )
 
 
 def snapshot_assert(

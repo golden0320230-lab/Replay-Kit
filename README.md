@@ -102,6 +102,23 @@ Export a shareable redacted bundle:
 replaykit bundle runs/demo-recording.rpk --out runs/incident.bundle --redact default
 ```
 
+Load custom redaction rules (record/bundle/diff):
+
+```bash
+cat > redaction.policy.json <<'JSON'
+{
+  "version": "team-policy-v1",
+  "extra_sensitive_field_names": ["x-trace-id", "session_id"],
+  "extra_secret_value_patterns": ["\\bghp_[A-Za-z0-9]{20,}\\b"],
+  "extra_sensitive_path_patterns": ["^/metadata/internal_trace$"]
+}
+JSON
+
+replaykit record --out runs/demo-custom.rpk --redaction-config redaction.policy.json
+replaykit bundle runs/demo-custom.rpk --out runs/incident-custom.bundle --redaction-config redaction.policy.json
+replaykit diff runs/demo-custom.rpk runs/replay-output.rpk --redaction-config redaction.policy.json --json
+```
+
 Sign artifacts during record/bundle and verify signature integrity:
 
 ```bash

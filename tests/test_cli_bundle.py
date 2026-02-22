@@ -107,3 +107,59 @@ def test_cli_bundle_invalid_profile_returns_non_zero(tmp_path: Path) -> None:
     assert result.exit_code == 1
     combined_output = result.stdout + result.stderr
     assert "bundle failed" in combined_output
+
+
+def test_cli_bundle_redaction_config_applies_custom_policy(tmp_path: Path) -> None:
+    source = _source_artifact(tmp_path)
+    out = tmp_path / "custom.bundle"
+    config = tmp_path / "redaction.json"
+    config.write_text(
+        json.dumps({"extra_sensitive_field_names": ["provider"]}),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "bundle",
+            str(source),
+            "--out",
+            str(out),
+            "--redaction-config",
+            str(config),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert payload["redaction_profile"] == "custom"
+
+    run = read_artifact(out)
+    assert run.steps[0].metadata["provider"] == "[REDACTED]"
+
+
+def test_cli_bundle_redaction_config_rejects_non_default_profile(tmp_path: Path) -> None:
+    source = _source_artifact(tmp_path)
+    out = tmp_path / "bad.bundle"
+    config = tmp_path / "redaction.json"
+    config.write_text("{}", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "bundle",
+            str(source),
+            "--out",
+            str(out),
+            "--redact",
+            "none",
+            "--redaction-config",
+            str(config),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "can only be used with --redact default" in (result.stdout + result.stderr)

@@ -14,7 +14,15 @@ from replaypack.capture.interceptors import (
     tool,
 )
 from replaypack.capture.policy import BoundaryKind, InterceptionPolicy
-from replaypack.capture.redaction import DEFAULT_REDACTION_POLICY, RedactionPolicy, redact_payload
+from replaypack.capture.redaction import (
+    DEFAULT_REDACTION_POLICY,
+    RedactionPolicy,
+    RedactionPolicyConfigError,
+    build_redaction_policy,
+    load_redaction_policy_from_file,
+    redact_payload,
+    redaction_policy_from_config,
+)
 
 __all__ = [
     "CaptureError",
@@ -23,7 +31,11 @@ __all__ = [
     "BoundaryKind",
     "InterceptionPolicy",
     "RedactionPolicy",
+    "RedactionPolicyConfigError",
     "DEFAULT_REDACTION_POLICY",
+    "build_redaction_policy",
+    "redaction_policy_from_config",
+    "load_redaction_policy_from_file",
     "CaptureContext",
     "capture_run",
     "get_current_context",

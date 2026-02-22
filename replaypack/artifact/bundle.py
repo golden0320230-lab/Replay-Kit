@@ -10,7 +10,7 @@ from replaypack.artifact.io import read_artifact, write_artifact
 from replaypack.capture.redaction import DEFAULT_REDACTION_POLICY, RedactionPolicy, redact_payload
 from replaypack.core.models import Run, Step
 
-RedactionProfile = Literal["default", "none"]
+RedactionProfile = Literal["default", "none", "custom"]
 
 NONE_REDACTION_POLICY = RedactionPolicy(version="1.0-none", enabled=False)
 
@@ -55,13 +55,21 @@ def write_bundle_artifact(
     out_path: str | Path,
     *,
     redaction_profile: str = "default",
+    redaction_policy: RedactionPolicy | None = None,
+    redaction_profile_label: str | None = None,
     sign: bool = False,
     signing_key: str | None = None,
     signing_key_id: str = "default",
 ) -> dict:
     """Write a redacted bundle artifact from an input artifact path."""
     source_run = read_artifact(source_artifact_path)
-    profile_name, policy = resolve_redaction_policy(redaction_profile)
+    if redaction_policy is None:
+        profile_name, policy = resolve_redaction_policy(redaction_profile)
+    else:
+        profile_name = (redaction_profile_label or "custom").strip().lower()
+        if not profile_name:
+            profile_name = "custom"
+        policy = redaction_policy
     bundled_run = redact_run_for_bundle(source_run, policy=policy)
 
     return write_artifact(

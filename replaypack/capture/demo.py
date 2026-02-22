@@ -11,6 +11,7 @@ from replaypack.capture.interceptors import (
     tool,
 )
 from replaypack.capture.policy import InterceptionPolicy
+from replaypack.capture.redaction import RedactionPolicy
 from replaypack.core.models import Run
 
 
@@ -23,12 +24,14 @@ def build_demo_run(
     *,
     run_id: str = "run-demo-001",
     timestamp: str = "2026-02-21T00:00:00Z",
+    redaction_policy: RedactionPolicy | None = None,
 ) -> Run:
     """Build a deterministic demo run spanning model/tool/http boundaries."""
     with capture_run(
         run_id=run_id,
         timestamp=timestamp,
         policy=InterceptionPolicy(capture_http_bodies=False),
+        redaction_policy=redaction_policy,
     ) as context:
         capture_model_call(
             "gpt-4o-mini",
