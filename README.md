@@ -26,14 +26,19 @@ ReplayKit is designed to answer one question quickly:
 python3 -m pip install -e ".[dev]"
 python3 examples/apps/minimal_app.py
 replaykit record --out runs/quickstart-demo.rpk
+replaykit record --out runs/quickstart-wrapper.rpk -- python examples/apps/minimal_app.py
+replaykit record --out runs/quickstart-module.rpk -- python -m replaypack.capture.demo
 replaykit replay runs/quickstart-demo.rpk --out runs/quickstart-replay.rpk
 replaykit diff runs/quickstart-demo.rpk runs/quickstart-replay.rpk --first-divergence
 ```
 
-## Planned CLI Surface
+## CLI Surface
 
 ```bash
 replaykit record -- python app.py
+replaykit record --out runs/app.rpk -- python examples/apps/minimal_app.py
+replaykit record --out runs/mod.rpk -- python -m replaypack.capture.demo
+python3 -m replaykit.bootstrap --out runs/bootstrap.rpk -- examples/apps/minimal_app.py
 replaykit replay runs/2026-02-21-120000.rpk
 replaykit diff runs/a.rpk runs/b.rpk --first-divergence
 replaykit bundle runs/a.rpk --redact default --out incident.bundle
@@ -79,11 +84,31 @@ pyproject.toml        Package metadata and CLI entrypoint
 - `M5` complete: redacted bundle export profiles with replay-safe bundle round-trip.
 - `M6` complete: CI-oriented assertion command and workflow integration.
 - `M7` complete: local Git-diff style UI with first-divergence navigation.
+- Post-`M7` updates: non-demo CLI wrapper recording, bootstrap runner module, stable library record context manager, plugin/release docs.
 
 Generate a deterministic capture artifact:
 
 ```bash
 replaykit record --out runs/demo-recording.rpk
+```
+
+Record an arbitrary Python app (no app code changes):
+
+```bash
+replaykit record --out runs/app-recording.rpk -- python examples/apps/minimal_app.py
+replaykit record --out runs/mod.rpk -- python -m replaypack.capture.demo
+```
+
+Current wrapper interception scope:
+
+- Captured automatically: `requests` and `httpx` HTTP boundaries.
+- Not captured automatically: provider SDKs beyond current adapters unless explicitly integrated.
+
+Bootstrap in-process capture directly (script or module):
+
+```bash
+python3 -m replaykit.bootstrap --out runs/bootstrap-script.rpk -- examples/apps/minimal_app.py
+python3 -m replaykit.bootstrap --out runs/bootstrap-module.rpk -- -m replaypack.capture.demo
 ```
 
 Replay it offline into a deterministic output artifact:
@@ -240,15 +265,19 @@ Library integration capture context (no CLI):
 
 ```python
 import replaykit
-import requests
+
+@replaykit.tool(name="demo.echo")
+def echo(value: str) -> dict[str, str]:
+    return {"echo": value}
 
 with replaykit.record("runs/library-capture.rpk", intercept=("requests", "httpx")):
-    requests.get("http://127.0.0.1:8080/health", timeout=5)
+    echo("hello")
 ```
 
 Public API compatibility policy and semver guarantees:
 
 - `docs/PUBLIC_API.md`
+- `docs/plugins.md`
 
 Release and upgrade policy:
 
