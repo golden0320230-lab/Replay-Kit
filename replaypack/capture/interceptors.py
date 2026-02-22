@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, Callable, ParamSpec, TypeVar
+from typing import Any, Awaitable, Callable, ParamSpec, TypeVar
 
 from replaypack.capture.context import CaptureContext, get_current_context
 from replaypack.capture.exceptions import BoundaryPolicyError
@@ -177,6 +177,75 @@ def capture_http_call(
 
     try:
         response = send(request)
+    except Exception as error:
+        _record_runtime_error(ctx, "http", request.url, error)
+        raise
+
+    response_body: Any
+    if ctx.policy.capture_http_bodies:
+        response_body = response.body
+    else:
+        response_body = "<omitted by policy>"
+
+    ctx.record_step(
+        "tool.response",
+        input_payload={"method": request.method.upper(), "url": request.url},
+        output_payload={
+            "status_code": response.status_code,
+            "headers": dict(response.headers),
+            "body": response_body,
+        },
+        metadata=run_metadata,
+    )
+
+    return response
+
+
+async def capture_http_call_async(
+    request: HttpRequest,
+    send: Callable[[HttpRequest], Awaitable[HttpResponse]],
+    *,
+    context: CaptureContext | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> HttpResponse:
+    """Async variant of HTTP boundary capture."""
+    ctx = context or get_current_context()
+    if ctx is None:
+        return await send(request)
+
+    run_metadata = {
+        "boundary": "http",
+        "method": request.method.upper(),
+        "url": request.url,
+        **(metadata or {}),
+    }
+
+    try:
+        ctx.policy.assert_allowed("http", request.url)
+    except BoundaryPolicyError as error:
+        _record_policy_error(ctx, "http", request.url, error)
+        raise
+
+    req_body: Any
+    if ctx.policy.capture_http_bodies:
+        req_body = request.body
+    else:
+        req_body = "<omitted by policy>"
+
+    ctx.record_step(
+        "tool.request",
+        input_payload={
+            "method": request.method.upper(),
+            "url": request.url,
+            "headers": dict(request.headers),
+            "body": req_body,
+        },
+        output_payload={"status": "sent"},
+        metadata=run_metadata,
+    )
+
+    try:
+        response = await send(request)
     except Exception as error:
         _record_runtime_error(ctx, "http", request.url, error)
         raise

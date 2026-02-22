@@ -17,6 +17,9 @@ The capture API emits structured `Step` records through a run-scoped `CaptureCon
 - `capture_tool_call(...)`
 - `@tool(...)` decorator
 - `capture_http_call(...)`
+- `intercept_httpx(...)` scoped adapter (sync + async client patch)
+- `intercept_requests(...)` scoped adapter (session patch)
+- `intercept_openai_like(...)` scoped OpenAI-like adapter patch
 - `InterceptionPolicy` (allow/deny controls)
 - `RedactionPolicy` (security-first masking)
 - `build_demo_run(...)` deterministic demo workflow
@@ -67,6 +70,7 @@ HTTP bodies are omitted by default (`capture_http_bodies=False`) to reduce leaka
 - Async tasks can safely run independent capture scopes without cross-run leakage.
 - New OS threads do not inherit active capture context automatically.
   - For shared threaded capture, pass `context=...` explicitly to capture wrappers.
+- Adapter monkeypatches are scoped to their context managers and always restored on exit.
 
 ## Current Limits
 

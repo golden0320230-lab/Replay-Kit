@@ -1,5 +1,6 @@
 """Capture subsystem for ReplayKit."""
 
+from replaypack.capture.adapters import intercept_httpx, intercept_openai_like, intercept_requests
 from replaypack.capture.context import CaptureContext, capture_run, get_current_context
 from replaypack.capture.demo import build_demo_run
 from replaypack.capture.exceptions import BoundaryPolicyError, CaptureError, NoActiveRunError
@@ -7,6 +8,7 @@ from replaypack.capture.interceptors import (
     HttpRequest,
     HttpResponse,
     capture_http_call,
+    capture_http_call_async,
     capture_model_call,
     capture_tool_call,
     tool,
@@ -26,11 +28,15 @@ __all__ = [
     "capture_run",
     "get_current_context",
     "build_demo_run",
+    "intercept_httpx",
+    "intercept_requests",
+    "intercept_openai_like",
     "HttpRequest",
     "HttpResponse",
     "capture_model_call",
     "capture_tool_call",
     "capture_http_call",
+    "capture_http_call_async",
     "tool",
     "redact_payload",
 ]
