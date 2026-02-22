@@ -32,6 +32,26 @@ replaykit replay runs/quickstart-demo.rpk --out runs/quickstart-replay.rpk
 replaykit diff runs/quickstart-demo.rpk runs/quickstart-replay.rpk --first-divergence
 ```
 
+## Installation
+
+Install from source (current workflow):
+
+```bash
+python3 -m pip install -e ".[dev]"
+```
+
+Install from PyPI (when published):
+
+```bash
+pip install replaykit
+```
+
+Check installed CLI version:
+
+```bash
+replaykit --version
+```
+
 ## CLI Surface
 
 ```bash
@@ -162,6 +182,11 @@ Sign artifacts during record/bundle and verify signature integrity:
 REPLAYKIT_SIGNING_KEY="dev-signing-key" replaykit record --out runs/signed-recording.rpk --sign
 REPLAYKIT_SIGNING_KEY="dev-signing-key" replaykit verify runs/signed-recording.rpk --json
 ```
+
+Signing environment variables:
+
+- `REPLAYKIT_SIGNING_KEY`: HMAC signing key used by `record --sign` and `bundle --sign`.
+- `REPLAYKIT_SIGNING_KEY_ID`: optional key identifier included in signature metadata.
 
 Assert candidate behavior against a baseline artifact (CI-friendly exit codes):
 
