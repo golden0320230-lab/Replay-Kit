@@ -37,6 +37,12 @@ replaykit diff runs/quickstart-demo.rpk runs/quickstart-replay.rpk --first-diver
 Install from source (current workflow):
 
 ```bash
+pip install -e .
+```
+
+Install from source with dev/test extras:
+
+```bash
 python3 -m pip install -e ".[dev]"
 ```
 
