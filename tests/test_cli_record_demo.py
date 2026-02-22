@@ -21,12 +21,12 @@ def test_record_demo_writes_artifact(tmp_path: Path) -> None:
     assert len(run.steps) == 6
 
 
-def test_record_without_demo_flag_fails() -> None:
+def test_record_without_demo_flag_requires_target() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["record", "--no-demo"])
 
     assert result.exit_code == 2
-    assert "only --demo is supported in M2" in result.output
+    assert "--no-demo requires a target command" in result.output
 
 
 def test_record_with_redaction_config_masks_custom_field(tmp_path: Path) -> None:
