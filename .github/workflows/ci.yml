@@ -7,7 +7,11 @@ on:
 
 jobs:
   test-and-assert:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -29,16 +33,19 @@ jobs:
 
       - name: Replay Assertion
         run: |
-          mkdir -p runs
-          python -m replaypack assert examples/runs/m2_capture_boundaries.rpk \
-            --candidate examples/runs/m2_capture_boundaries.rpk \
-            --json > runs/ci-assert.json
+          python -c "from pathlib import Path; Path('runs').mkdir(parents=True, exist_ok=True)"
+          python -m replaypack assert examples/runs/m2_capture_boundaries.rpk --candidate examples/runs/m2_capture_boundaries.rpk --json > runs/ci-assert.json
           echo "CI assertion output written to runs/ci-assert.json"
+
+      - name: Cross-Platform Hash Parity
+        run: |
+          python -m replaypack.ci_parity --source examples/runs/m2_capture_boundaries.rpk --out-dir runs/parity --expected ci/expected_hash_parity.json --json > runs/parity/ci-hash-parity.json
+          echo "Parity output written to runs/parity/ci-hash-parity.json"
 
       - name: Upload Replay Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: replay-artifacts
+          name: replay-artifacts-${{ matrix.os }}
           path: runs/
           if-no-files-found: ignore

@@ -1,0 +1,9 @@
+{
+  "artifact_checksum": "sha256:39d30c99f3d345caa5366701b51d529b01acfa6f7668850cee61d1c8948de16c",
+  "fixed_clock": "2026-02-21T18:30:00.000000Z",
+  "replay_run_id": "replay-0f8c260b112b",
+  "seed": 123,
+  "source_artifact": "examples/runs/m2_capture_boundaries.rpk",
+  "step_count": 6,
+  "step_hash_digest": "sha256:b99944665d4fabf00defe31122653426dfa5784eb3fa7736f24418f59b11c66d"
+}
