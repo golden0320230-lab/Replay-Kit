@@ -55,6 +55,9 @@ def write_bundle_artifact(
     out_path: str | Path,
     *,
     redaction_profile: str = "default",
+    sign: bool = False,
+    signing_key: str | None = None,
+    signing_key_id: str = "default",
 ) -> dict:
     """Write a redacted bundle artifact from an input artifact path."""
     source_run = read_artifact(source_artifact_path)
@@ -70,4 +73,7 @@ def write_bundle_artifact(
             "redaction_profile": profile_name,
             "redaction_policy_version": policy.version,
         },
+        sign=sign,
+        signing_key=signing_key,
+        signing_key_id=signing_key_id,
     )

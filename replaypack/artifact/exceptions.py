@@ -15,3 +15,11 @@ class ArtifactChecksumError(ArtifactError):
 
 class ArtifactRedactionProfileError(ArtifactError):
     """Invalid bundle redaction profile."""
+
+
+class ArtifactSignatureError(ArtifactError):
+    """Artifact signature validation failed."""
+
+
+class ArtifactSigningKeyError(ArtifactSignatureError):
+    """Artifact signing key is missing or invalid."""

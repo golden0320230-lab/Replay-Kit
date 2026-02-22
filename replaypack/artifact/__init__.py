@@ -10,12 +10,15 @@ from replaypack.artifact.exceptions import (
     ArtifactChecksumError,
     ArtifactError,
     ArtifactRedactionProfileError,
+    ArtifactSignatureError,
+    ArtifactSigningKeyError,
     ArtifactValidationError,
 )
 from replaypack.artifact.io import (
     build_artifact_envelope,
     compute_artifact_checksum,
     read_artifact,
+    read_artifact_envelope,
     write_artifact,
 )
 from replaypack.artifact.schema import (
@@ -27,6 +30,15 @@ from replaypack.artifact.schema import (
     parse_artifact_version,
     schema_path_for_version,
     validate_artifact,
+)
+from replaypack.artifact.signing import (
+    SIGNATURE_ALGORITHM,
+    SIGNING_KEY_ENV_VAR,
+    SIGNING_KEY_ID_ENV_VAR,
+    SignatureVerificationResult,
+    compute_artifact_hmac,
+    sign_artifact_envelope,
+    verify_artifact_signature,
 )
 
 __all__ = [
@@ -41,6 +53,8 @@ __all__ = [
     "ArtifactValidationError",
     "ArtifactChecksumError",
     "ArtifactRedactionProfileError",
+    "ArtifactSignatureError",
+    "ArtifactSigningKeyError",
     "NONE_REDACTION_POLICY",
     "resolve_redaction_policy",
     "redact_run_for_bundle",
@@ -50,4 +64,12 @@ __all__ = [
     "validate_artifact",
     "write_artifact",
     "read_artifact",
+    "read_artifact_envelope",
+    "SIGNATURE_ALGORITHM",
+    "SIGNING_KEY_ENV_VAR",
+    "SIGNING_KEY_ID_ENV_VAR",
+    "SignatureVerificationResult",
+    "compute_artifact_hmac",
+    "sign_artifact_envelope",
+    "verify_artifact_signature",
 ]

@@ -5,7 +5,15 @@ import webbrowser
 
 import typer
 
-from replaypack.artifact import ArtifactError, read_artifact, write_artifact, write_bundle_artifact
+from replaypack.artifact import (
+    ArtifactError,
+    SIGNING_KEY_ENV_VAR,
+    read_artifact,
+    read_artifact_envelope,
+    verify_artifact_signature,
+    write_artifact,
+    write_bundle_artifact,
+)
 from replaypack.capture import build_demo_run
 from replaypack.diff import (
     AssertionResult,
@@ -55,6 +63,23 @@ def record(
         "--demo/--no-demo",
         help="Use the built-in deterministic demo capture workflow.",
     ),
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Attach HMAC signature to the output artifact.",
+    ),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        envvar=SIGNING_KEY_ENV_VAR,
+        help=f"HMAC signing key. Can also be set via {SIGNING_KEY_ENV_VAR}.",
+    ),
+    signing_key_id: str = typer.Option(
+        "default",
+        "--signing-key-id",
+        envvar="REPLAYKIT_SIGNING_KEY_ID",
+        help="Optional signing key identifier stored in artifact signature metadata.",
+    ),
 ) -> None:
     """Record an execution run."""
     if not demo:
@@ -62,7 +87,17 @@ def record(
         raise typer.Exit(code=2)
 
     run = build_demo_run()
-    write_artifact(run, out)
+    try:
+        write_artifact(
+            run,
+            out,
+            sign=sign,
+            signing_key=signing_key,
+            signing_key_id=signing_key_id,
+        )
+    except ArtifactError as error:
+        typer.echo(f"record failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
     typer.echo(f"recorded artifact: {out}")
 
 
@@ -175,10 +210,34 @@ def bundle(
         "--json",
         help="Emit machine-readable bundle summary.",
     ),
+    sign: bool = typer.Option(
+        False,
+        "--sign",
+        help="Attach HMAC signature to bundled artifact.",
+    ),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        envvar=SIGNING_KEY_ENV_VAR,
+        help=f"HMAC signing key. Can also be set via {SIGNING_KEY_ENV_VAR}.",
+    ),
+    signing_key_id: str = typer.Option(
+        "default",
+        "--signing-key-id",
+        envvar="REPLAYKIT_SIGNING_KEY_ID",
+        help="Optional signing key identifier stored in artifact signature metadata.",
+    ),
 ) -> None:
     """Bundle and redact a run artifact."""
     try:
-        envelope = write_bundle_artifact(artifact, out, redaction_profile=redact)
+        envelope = write_bundle_artifact(
+            artifact,
+            out,
+            redaction_profile=redact,
+            sign=sign,
+            signing_key=signing_key,
+            signing_key_id=signing_key_id,
+        )
     except (ArtifactError, FileNotFoundError) as error:
         typer.echo(f"bundle failed: {error}", err=True)
         raise typer.Exit(code=1) from error
@@ -196,6 +255,65 @@ def bundle(
         typer.echo(json.dumps(summary, ensure_ascii=True, sort_keys=True))
     else:
         typer.echo(f"bundle artifact: {out}")
+
+
+@app.command()
+def verify(
+    artifact: Path = typer.Argument(..., help="Path to signed .rpk/.bundle artifact."),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        envvar=SIGNING_KEY_ENV_VAR,
+        help=f"HMAC signing key. Can also be set via {SIGNING_KEY_ENV_VAR}.",
+    ),
+    require_signature: bool = typer.Option(
+        True,
+        "--require-signature/--allow-unsigned",
+        help="Require signature presence (default) or allow unsigned artifacts.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable verification output.",
+    ),
+) -> None:
+    """Verify artifact checksum and optional HMAC signature."""
+    try:
+        envelope = read_artifact_envelope(artifact)
+    except (ArtifactError, FileNotFoundError, json.JSONDecodeError) as error:
+        message = f"verify failed: {error}"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"status": "error", "valid": False, "exit_code": 1, "message": message},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    result = verify_artifact_signature(
+        envelope,
+        signing_key=signing_key,
+        require_signature=require_signature,
+    )
+
+    payload = result.to_dict()
+    payload["artifact_path"] = str(artifact)
+    payload["exit_code"] = 0 if result.valid else 1
+
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+    else:
+        if result.valid:
+            typer.echo(f"verify passed: {artifact} ({result.status})")
+        else:
+            typer.echo(f"verify failed: {result.message}", err=True)
+
+    if not result.valid:
+        raise typer.Exit(code=1)
 
 
 @app.command(name="assert")

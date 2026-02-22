@@ -101,6 +101,27 @@
       "description": "Major.minor artifact schema version",
       "pattern": "^\\d+\\.\\d+$",
       "type": "string"
+    },
+    "signature": {
+      "additionalProperties": true,
+      "properties": {
+        "algorithm": {
+          "type": "string"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "value": {
+          "pattern": "^hmac-sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "key_id",
+        "value"
+      ],
+      "type": "object"
     }
   },
   "required": [

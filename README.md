@@ -26,6 +26,7 @@ replaykit record -- python app.py
 replaykit replay runs/2026-02-21-120000.rpk
 replaykit diff runs/a.rpk runs/b.rpk --first-divergence
 replaykit bundle runs/a.rpk --redact default --out incident.bundle
+replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
 replaykit ui
 ```
@@ -78,6 +79,13 @@ Export a shareable redacted bundle:
 
 ```bash
 replaykit bundle runs/demo-recording.rpk --out runs/incident.bundle --redact default
+```
+
+Sign artifacts during record/bundle and verify signature integrity:
+
+```bash
+REPLAYKIT_SIGNING_KEY="dev-signing-key" replaykit record --out runs/signed-recording.rpk --sign
+REPLAYKIT_SIGNING_KEY="dev-signing-key" replaykit verify runs/signed-recording.rpk --json
 ```
 
 Assert candidate behavior against a baseline artifact (CI-friendly exit codes):

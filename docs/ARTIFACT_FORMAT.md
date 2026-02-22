@@ -39,9 +39,19 @@ Each `.rpk` artifact is a JSON object with this envelope:
       "steps": []
     }
   },
-  "checksum": "sha256:<hex>"
+  "checksum": "sha256:<hex>",
+  "signature": {
+    "algorithm": "hmac-sha256",
+    "key_id": "default",
+    "value": "hmac-sha256:<hex>"
+  }
 }
 ```
+
+Notes:
+
+- `signature` is optional.
+- Unsigned artifacts remain valid; verification policy is command-driven (`--require-signature` vs `--allow-unsigned`).
 
 Real artifact examples:
 

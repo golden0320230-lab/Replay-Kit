@@ -105,6 +105,19 @@ _FALLBACK_ARTIFACT_SCHEMA_V1: dict[str, Any] = {
             "type": "string",
             "pattern": r"^sha256:[0-9a-f]{64}$",
         },
+        "signature": {
+            "type": "object",
+            "required": ["algorithm", "key_id", "value"],
+            "additionalProperties": True,
+            "properties": {
+                "algorithm": {"type": "string"},
+                "key_id": {"type": "string"},
+                "value": {
+                    "type": "string",
+                    "pattern": r"^hmac-sha256:[0-9a-f]{64}$",
+                },
+            },
+        },
     },
 }
 
