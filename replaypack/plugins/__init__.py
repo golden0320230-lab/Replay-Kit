@@ -14,8 +14,10 @@ from replaypack.plugins.base import (
     ReplayStartEvent,
 )
 from replaypack.plugins.exceptions import PluginConfigError, PluginError, PluginLoadError
+from replaypack.plugins.fake_provider_adapter import FakeProviderAdapter
 from replaypack.plugins.loader import load_plugin_manager_from_file
 from replaypack.plugins.manager import PluginDiagnostic, PluginManager
+from replaypack.plugins.provider_api import ProviderAdapter
 from replaypack.plugins.reference import LifecycleTracePlugin
 from replaypack.plugins.runtime import (
     get_active_plugin_manager,
@@ -31,6 +33,8 @@ __all__ = [
     "PluginError",
     "PluginConfigError",
     "PluginLoadError",
+    "ProviderAdapter",
+    "FakeProviderAdapter",
     "CaptureStartEvent",
     "CaptureStepEvent",
     "CaptureEndEvent",
