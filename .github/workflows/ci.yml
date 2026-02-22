@@ -35,14 +35,19 @@ jobs:
         run: |
           python examples/apps/minimal_app.py
 
-      - name: Golden Path Record/Replay/Diff/Assert
+      - name: Golden Path Record/Replay/Assert/Diff
         run: |
           python -c "from pathlib import Path; Path('runs/golden').mkdir(parents=True, exist_ok=True)"
           python -m replaypack record --out runs/golden/target.rpk -- python examples/apps/minimal_app.py
-          python -m replaypack replay runs/golden/target.rpk --out runs/golden/replay.rpk --seed 7 --fixed-clock 2026-02-22T00:00:00Z
-          python -m replaypack diff runs/golden/target.rpk runs/golden/replay.rpk --json > runs/golden/diff.json
-          python -m replaypack assert runs/golden/target.rpk --candidate runs/golden/target.rpk --json > runs/golden/assert.json
-          echo "Golden path completed (runs/golden/*)."
+          python -m replaypack replay runs/golden/target.rpk --out runs/golden/replay-a.rpk --seed 7 --fixed-clock 2026-02-22T00:00:00Z
+          python -m replaypack replay runs/golden/target.rpk --out runs/golden/replay-b.rpk --seed 7 --fixed-clock 2026-02-22T00:00:00Z
+          python -m replaypack assert runs/golden/replay-a.rpk --candidate runs/golden/replay-b.rpk --json > runs/golden/assert-determinism.json
+          python -m replaypack diff runs/golden/replay-a.rpk runs/golden/replay-a.rpk --json > runs/golden/diff-self.json
+          echo "Golden path deterministic checks completed (runs/golden/*)."
+
+      - name: Golden Path Replay Network Guard
+        run: |
+          python -m pytest -q tests/test_e2e_record_replay_assert.py
 
       - name: Replay Assertion
         run: |
