@@ -9,6 +9,7 @@ from replaypack.artifact.bundle import (
 from replaypack.artifact.exceptions import (
     ArtifactChecksumError,
     ArtifactError,
+    ArtifactMigrationError,
     ArtifactRedactionProfileError,
     ArtifactSignatureError,
     ArtifactSigningKeyError,
@@ -20,6 +21,13 @@ from replaypack.artifact.io import (
     read_artifact,
     read_artifact_envelope,
     write_artifact,
+)
+from replaypack.artifact.migration import (
+    ArtifactMigrationResult,
+    LEGACY_SOURCE_VERSION,
+    SUPPORTED_SOURCE_VERSIONS,
+    migrate_artifact_envelope,
+    migrate_artifact_file,
 )
 from replaypack.artifact.schema import (
     ARTIFACT_SCHEMA,
@@ -52,6 +60,7 @@ __all__ = [
     "ArtifactError",
     "ArtifactValidationError",
     "ArtifactChecksumError",
+    "ArtifactMigrationError",
     "ArtifactRedactionProfileError",
     "ArtifactSignatureError",
     "ArtifactSigningKeyError",
@@ -65,6 +74,11 @@ __all__ = [
     "write_artifact",
     "read_artifact",
     "read_artifact_envelope",
+    "LEGACY_SOURCE_VERSION",
+    "SUPPORTED_SOURCE_VERSIONS",
+    "ArtifactMigrationResult",
+    "migrate_artifact_envelope",
+    "migrate_artifact_file",
     "SIGNATURE_ALGORITHM",
     "SIGNING_KEY_ENV_VAR",
     "SIGNING_KEY_ID_ENV_VAR",

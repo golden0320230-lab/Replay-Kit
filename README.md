@@ -32,6 +32,7 @@ replaykit assert baseline.rpk
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk
+replaykit migrate runs/legacy-0.9.rpk --out runs/migrated.rpk
 replaykit ui
 ```
 
@@ -151,6 +152,12 @@ Run performance benchmark suite and optional slowdown gate:
 ```bash
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk --iterations 3 --out runs/benchmark.json --json
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk --iterations 3 --out runs/benchmark-current.json --baseline runs/benchmark-baseline.json --fail-on-slowdown 30 --json
+```
+
+Migrate legacy artifacts to current schema:
+
+```bash
+replaykit migrate runs/legacy-0.9.rpk --out runs/migrated.rpk --json
 ```
 
 Enable strict drift checks (environment/runtime metadata + step metadata):

@@ -17,6 +17,10 @@ class ArtifactRedactionProfileError(ArtifactError):
     """Invalid bundle redaction profile."""
 
 
+class ArtifactMigrationError(ArtifactError):
+    """Artifact migration failure or unsupported version transition."""
+
+
 class ArtifactSignatureError(ArtifactError):
     """Artifact signature validation failed."""
 

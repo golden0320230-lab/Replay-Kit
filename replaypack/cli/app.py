@@ -9,7 +9,10 @@ import typer
 
 from replaypack.artifact import (
     ArtifactError,
+    ArtifactMigrationError,
+    DEFAULT_ARTIFACT_VERSION,
     SIGNING_KEY_ENV_VAR,
+    migrate_artifact_file,
     redact_run_for_bundle,
     read_artifact,
     read_artifact_envelope,
@@ -633,6 +636,66 @@ def bundle(
         _echo_json(summary)
     else:
         _echo(f"bundle artifact: {out}")
+
+
+@app.command()
+def migrate(
+    artifact: Path = typer.Argument(..., help="Path to source artifact (.rpk/.bundle)."),
+    out: Path = typer.Option(
+        Path("runs/migrated.rpk"),
+        "--out",
+        help="Output path for migrated artifact.",
+    ),
+    target_version: str = typer.Option(
+        DEFAULT_ARTIFACT_VERSION,
+        "--target-version",
+        help="Target artifact schema version.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable migration summary.",
+    ),
+) -> None:
+    """Migrate an artifact to the target schema version."""
+    try:
+        summary = migrate_artifact_file(
+            artifact,
+            out,
+            target_version=target_version,
+        )
+    except (
+        ArtifactError,
+        ArtifactMigrationError,
+        FileNotFoundError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
+        message = f"migrate failed: {error}"
+        if json_output:
+            _echo_json({"status": "error", "exit_code": 1, "message": message})
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    payload = {
+        "status": "pass",
+        "exit_code": 0,
+        "source_path": str(artifact),
+        "out": str(out),
+        **summary.to_dict(),
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(
+            "migrated artifact: "
+            f"{artifact} -> {out} "
+            f"(version {summary.source_version} -> {summary.target_version}, "
+            f"steps={summary.total_steps}, "
+            f"preserved_hashes={summary.preserved_step_hashes}, "
+            f"recomputed_hashes={summary.recomputed_step_hashes})"
+        )
 
 
 @app.command()
