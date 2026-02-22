@@ -8,7 +8,11 @@ The format follows Keep a Changelog and Semantic Versioning.
 
 ### Added
 
-- Placeholder for upcoming changes.
+- Release hardening updates:
+  - `replaykit --version` now validated against package runtime version in tests.
+  - README install section now documents both `pip install -e .` and
+    `python3 -m pip install -e \".[dev]\"`.
+  - Release process docs continue to use GitHub release notes from `CHANGELOG.md`.
 
 ## [0.1.0] - 2026-02-22
 
