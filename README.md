@@ -1,5 +1,7 @@
 # ReplayKit
 
+[![CI](https://github.com/golden0320230-lab/Replay-Kit/actions/workflows/ci.yml/badge.svg)](https://github.com/golden0320230-lab/Replay-Kit/actions/workflows/ci.yml)
+
 ReplayKit is a local-first debugging toolkit for AI workflows. It records executions into deterministic artifacts, replays them offline, and diffs runs to identify the first point of divergence.
 
 ## Why ReplayKit
@@ -19,6 +21,16 @@ ReplayKit is designed to answer one question quickly:
 - Cross-platform behavior (macOS, Linux, Windows)
 - Security-first redaction defaults
 - Versioned plugin hooks for capture/replay/diff lifecycle
+
+## Compatibility & Stability
+
+- Supported Python versions: **3.10+** (declared in `pyproject.toml`; CI currently runs Python 3.12).
+- Platform guarantees: ReplayKit is validated in CI on **Linux**, **macOS**, and **Windows**.
+- Semantic versioning policy: ReplayKit follows **SemVer** (`MAJOR.MINOR.PATCH`) for user-facing behavior.
+- Backward compatibility guarantees:
+  - Public library API stability is defined in `docs/PUBLIC_API.md`.
+  - Breaking API changes require a major version bump.
+  - Artifact schema changes must include migration support.
 
 ## Current Capabilities
 

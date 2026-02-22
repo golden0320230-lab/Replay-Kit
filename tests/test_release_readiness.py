@@ -15,3 +15,13 @@ def test_release_docs_reference_tag_and_upgrade_policy() -> None:
     assert "semantic versioning" in text
     assert "git tag -a vx.y.z" in text
     assert "docs/public_api.md" in text
+
+
+def test_readme_includes_ci_badge_and_stability_statement() -> None:
+    text = Path("README.md").read_text(encoding="utf-8").lower()
+    assert "actions/workflows/ci.yml/badge.svg" in text
+    assert "compatibility & stability" in text
+    assert "supported python versions" in text
+    assert "platform guarantees" in text
+    assert "semantic versioning policy" in text
+    assert "backward compatibility guarantees" in text
