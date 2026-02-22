@@ -1,0 +1,17 @@
+{
+  "cwd": "C:\\Users\\alice\\repo\\",
+  "timestamp": "2026-02-22T20:10:00-05:00",
+  "tags": [
+    "z",
+    "a",
+    "m"
+  ],
+  "nested": {
+    "file_path": "\\tmp\\..\\logs\\trace.txt",
+    "updated_at": "2026-02-22T01:02:03.123456+09:00",
+    "labels": [
+      "beta",
+      "alpha"
+    ]
+  }
+}

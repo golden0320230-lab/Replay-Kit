@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from replaypack.artifact.exceptions import ArtifactChecksumError, ArtifactSigningKeyError
+from replaypack.artifact.schema import ArtifactValidationError
 from replaypack.artifact.schema import DEFAULT_ARTIFACT_VERSION, validate_artifact
 from replaypack.artifact.signing import sign_artifact_envelope
 from replaypack.core.canonical import canonical_json, canonicalize
@@ -91,7 +92,20 @@ def write_artifact(
 def read_artifact_envelope(path: str | Path) -> dict[str, Any]:
     """Read and validate artifact envelope with checksum verification."""
     target = Path(path)
-    artifact = json.loads(target.read_text(encoding="utf-8"))
+    try:
+        raw_text = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise ArtifactValidationError(
+            f"Artifact is not valid UTF-8 text: {target}"
+        ) from error
+
+    try:
+        artifact = json.loads(raw_text)
+    except json.JSONDecodeError as error:
+        raise ArtifactValidationError(
+            f"Artifact is not valid JSON: {target} ({error})"
+        ) from error
+
     validate_artifact(artifact)
 
     checksum_actual = artifact.get("checksum")

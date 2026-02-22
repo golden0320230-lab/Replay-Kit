@@ -1,0 +1,47 @@
+{
+  "id": "run-fuzz-right",
+  "timestamp": "2026-02-22T20:00:10Z",
+  "environment_fingerprint": {
+    "os": "linux"
+  },
+  "runtime_versions": {
+    "python": "3.12.1",
+    "replaykit": "0.1.0"
+  },
+  "steps": [
+    {
+      "id": "step-000001",
+      "type": "tool.request",
+      "input": {
+        "tool": "search-v2",
+        "args": [
+          "forecast",
+          {
+            "city": "new york"
+          }
+        ]
+      },
+      "output": {
+        "status": "sent"
+      },
+      "metadata": {
+        "provider": "demo"
+      }
+    },
+    {
+      "id": "step-000002",
+      "type": "tool.response",
+      "input": {
+        "ok": true
+      },
+      "output": {
+        "items": [
+          "sunny"
+        ]
+      },
+      "metadata": {
+        "provider": "demo"
+      }
+    }
+  ]
+}

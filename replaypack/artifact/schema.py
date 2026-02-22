@@ -161,6 +161,9 @@ ARTIFACT_SCHEMA: dict[str, Any] = load_artifact_schema(DEFAULT_ARTIFACT_VERSION)
 
 def validate_artifact(artifact: dict[str, Any]) -> None:
     """Validate artifact shape and supported version contract."""
+    if not isinstance(artifact, dict):
+        raise ArtifactValidationError("Artifact must be a JSON object at root.")
+
     version = str(artifact.get("version", "")).strip()
     major, _minor = parse_artifact_version(version)
 

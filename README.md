@@ -160,6 +160,12 @@ Migrate legacy artifacts to current schema:
 replaykit migrate runs/legacy-0.9.rpk --out runs/migrated.rpk --json
 ```
 
+Run deterministic fuzz smoke tests (canonicalization, parser, diff):
+
+```bash
+python3 -m pytest -q tests/test_fuzz_stability.py
+```
+
 Enable strict drift checks (environment/runtime metadata + step metadata):
 
 ```bash

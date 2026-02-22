@@ -1,0 +1,32 @@
+{
+  "id": "run-fuzz-left",
+  "timestamp": "2026-02-22T20:00:00Z",
+  "environment_fingerprint": {
+    "os": "macOS"
+  },
+  "runtime_versions": {
+    "python": "3.12.1",
+    "replaykit": "0.1.0"
+  },
+  "steps": [
+    {
+      "id": "step-000001",
+      "type": "tool.request",
+      "input": {
+        "tool": "search",
+        "args": [
+          "forecast",
+          {
+            "city": "sf"
+          }
+        ]
+      },
+      "output": {
+        "status": "sent"
+      },
+      "metadata": {
+        "provider": "demo"
+      }
+    }
+  ]
+}
