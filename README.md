@@ -226,6 +226,10 @@ result = replaykit.diff("examples/runs/m2_capture_boundaries.rpk", "examples/run
 print(result.first_divergence.index if result.first_divergence else "no divergence")
 ```
 
+Public API compatibility policy and semver guarantees:
+
+- `docs/PUBLIC_API.md`
+
 ## License
 
 MIT

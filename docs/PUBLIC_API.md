@@ -1,4 +1,4 @@
-# ReplayKit Public API Contract (Issue #1)
+# ReplayKit Public API Contract (v1.x)
 
 ## Supported Import Path
 
@@ -10,14 +10,39 @@ import replaykit
 
 This is the stable, semver-governed API surface.
 
+## Stable Module Surface
+
+- `replaykit` is the only stable top-level module for library users.
+- `replaykit.__all__` is the source of truth for exported public symbols.
+- Modules under `replaypack.*` are internal implementation details.
+
+## Public Symbols (Current v1.x)
+
+```python
+replaykit.__all__ == [
+    "__version__",
+    "ReplayMode",
+    "AssertionResult",
+    "RunDiffResult",
+    "SnapshotWorkflowResult",
+    "record",
+    "replay",
+    "diff",
+    "assert_run",
+    "bundle",
+    "snapshot_assert",
+]
+```
+
 ## Public Functions
 
 ```python
 replaykit.record(path, *, mode="stub", redaction=True)
-replaykit.replay(path, *, out, mode="stub", seed=0, fixed_clock="2026-01-01T00:00:00Z")
-replaykit.diff(left, right, *, first_only=False, max_changes_per_step=32)
+replaykit.replay(path, *, out, mode="stub", seed=0, fixed_clock="2026-01-01T00:00:00Z", rerun_from=None, rerun_step_types=(), rerun_step_ids=())
+replaykit.diff(left, right, *, first_only=False, max_changes_per_step=32, redaction_policy=None)
 replaykit.assert_run(baseline, candidate, *, strict=False, max_changes_per_step=32)
-replaykit.bundle(path, *, out, redaction_profile="default")
+replaykit.bundle(path, *, out, redaction_profile="default", redaction_policy=None)
+replaykit.snapshot_assert(name, candidate, *, snapshots_dir="snapshots", update=False, strict=False, max_changes_per_step=32)
 ```
 
 ## Stability Policy
@@ -26,6 +51,7 @@ replaykit.bundle(path, *, out, redaction_profile="default")
 - Breaking changes to public function signatures require a major version bump.
 - Additive keyword-only parameters are allowed in minor releases.
 - Deprecated APIs must emit warnings for at least one minor release before removal.
+- Public API tests in `tests/test_public_api_contract.py` must be updated in the same change as any public API change.
 
 ## Notes
 
@@ -34,4 +60,4 @@ replaykit.bundle(path, *, out, redaction_profile="default")
   - run `environment_fingerprint` mismatch
   - run `runtime_versions` mismatch
   - per-step `metadata` drift (including volatile metadata fields)
-- Internal modules under `replaypack.*` are implementation details and may change.
+- Internal modules under `replaypack.*` are implementation details and may change without deprecation guarantees.
