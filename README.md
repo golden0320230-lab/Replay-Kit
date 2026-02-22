@@ -33,6 +33,14 @@ replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit ui
 ```
 
+Global output modes:
+
+```bash
+replaykit --quiet assert runs/baseline.rpk --candidate runs/candidate.rpk
+replaykit --no-color diff runs/a.rpk runs/b.rpk
+replaykit --stable-json assert runs/baseline.rpk --candidate runs/candidate.rpk --json
+```
+
 ## Repository Scaffold
 
 ```text

@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 import time
 import webbrowser
+from dataclasses import dataclass
+from typing import Any
 
 import typer
 
@@ -46,6 +48,64 @@ from replaypack.snapshot import (
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
+
+
+@dataclass(slots=True)
+class _OutputOptions:
+    quiet: bool = False
+    no_color: bool = False
+    stable_json: bool = True
+
+
+_OUTPUT_OPTIONS = _OutputOptions()
+
+
+@app.callback()
+def app_options(
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help="Suppress non-error text output.",
+    ),
+    no_color: bool = typer.Option(
+        False,
+        "--no-color",
+        help="Disable ANSI color output.",
+    ),
+    stable_json: bool = typer.Option(
+        True,
+        "--stable-json/--pretty-json",
+        help="Emit stable compact JSON (or pretty JSON).",
+    ),
+) -> None:
+    """Global output controls for all CLI commands."""
+    _OUTPUT_OPTIONS.quiet = quiet
+    _OUTPUT_OPTIONS.no_color = no_color
+    _OUTPUT_OPTIONS.stable_json = stable_json
+
+
+def _echo(message: str, *, err: bool = False, force: bool = False) -> None:
+    if _OUTPUT_OPTIONS.quiet and not err and not force:
+        return
+    typer.echo(message, err=err, color=not _OUTPUT_OPTIONS.no_color)
+
+
+def _echo_json(payload: dict[str, Any], *, err: bool = False) -> None:
+    if _OUTPUT_OPTIONS.stable_json:
+        rendered = json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        rendered = json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        )
+    typer.echo(rendered, err=err, color=not _OUTPUT_OPTIONS.no_color)
 
 
 def _render_strict_failures(result: AssertionResult, *, max_changes: int) -> str:
@@ -103,7 +163,7 @@ def record(
 ) -> None:
     """Record an execution run."""
     if not demo:
-        typer.echo("record: only --demo is supported in M2")
+        _echo("record: only --demo is supported in M2", err=True)
         raise typer.Exit(code=2)
 
     run = build_demo_run()
@@ -116,9 +176,9 @@ def record(
             signing_key_id=signing_key_id,
         )
     except ArtifactError as error:
-        typer.echo(f"record failed: {error}", err=True)
+        _echo(f"record failed: {error}", err=True)
         raise typer.Exit(code=1) from error
-    typer.echo(f"recorded artifact: {out}")
+    _echo(f"recorded artifact: {out}")
 
 
 @app.command()
@@ -176,7 +236,7 @@ def replay(
     """Replay a recorded artifact in offline stub or hybrid mode."""
     replay_mode = mode.strip().lower()
     if replay_mode not in {"stub", "hybrid"}:
-        typer.echo(
+        _echo(
             f"replay failed: invalid replay mode '{mode}'. Expected stub or hybrid.",
             err=True,
         )
@@ -186,13 +246,13 @@ def replay(
     rerun_step_id_values = tuple(rerun_step_id or [])
     if replay_mode == "hybrid":
         if rerun_from is None:
-            typer.echo(
+            _echo(
                 "replay failed: --rerun-from is required for --mode hybrid.",
                 err=True,
             )
             raise typer.Exit(code=2)
         if not rerun_type_values and not rerun_step_id_values:
-            typer.echo(
+            _echo(
                 "replay failed: hybrid mode requires --rerun-type and/or --rerun-step-id.",
                 err=True,
             )
@@ -201,7 +261,7 @@ def replay(
             {step_type for step_type in rerun_type_values if step_type not in STEP_TYPES}
         )
         if unsupported_types:
-            typer.echo(
+            _echo(
                 "replay failed: unsupported --rerun-type values: "
                 f"{', '.join(unsupported_types)}",
                 err=True,
@@ -211,7 +271,7 @@ def replay(
     try:
         guardrail_mode: GuardrailMode = normalize_guardrail_mode(nondeterminism)
     except ValueError as error:
-        typer.echo(f"replay failed: {error}", err=True)
+        _echo(f"replay failed: {error}", err=True)
         raise typer.Exit(code=2) from error
 
     rerun_run = None
@@ -249,10 +309,10 @@ def replay(
                         findings=guardrail_findings,
                     ),
                 }
-                typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+                _echo_json(payload)
             else:
-                typer.echo(message, err=True)
-                typer.echo(
+                _echo(message, err=True)
+                _echo(
                     render_guardrail_summary(
                         mode=guardrail_mode,
                         findings=guardrail_findings,
@@ -273,7 +333,7 @@ def replay(
         else:
             envelope = write_replay_stub_artifact(source_run, str(out), config=config)
     except (ArtifactError, ReplayError, FileNotFoundError) as error:
-        typer.echo(f"replay failed: {error}", err=True)
+        _echo(f"replay failed: {error}", err=True)
         raise typer.Exit(code=1) from error
 
     summary = {
@@ -296,15 +356,15 @@ def replay(
         summary["rerun_step_ids"] = list(policy.rerun_step_ids)
 
     if json_output:
-        typer.echo(json.dumps(summary, ensure_ascii=True, sort_keys=True))
+        _echo_json(summary)
     else:
-        typer.echo(f"replayed artifact ({replay_mode}): {out}")
+        _echo(f"replayed artifact ({replay_mode}): {out}")
         guardrail_text = render_guardrail_summary(
             mode=guardrail_mode,
             findings=guardrail_findings if guardrail_mode != "off" else [],
         )
         if guardrail_text:
-            typer.echo(guardrail_text)
+            _echo(guardrail_text)
 
 
 @app.command()
@@ -332,7 +392,7 @@ def diff(
         left_run = read_artifact(left)
         right_run = read_artifact(right)
     except (ArtifactError, FileNotFoundError) as error:
-        typer.echo(f"diff failed: {error}", err=True)
+        _echo(f"diff failed: {error}", err=True)
         raise typer.Exit(code=1) from error
 
     result = diff_runs(
@@ -343,11 +403,11 @@ def diff(
     )
 
     if json_output:
-        typer.echo(json.dumps(result.to_dict(), ensure_ascii=True, sort_keys=True))
+        _echo_json(result.to_dict())
         return
 
-    typer.echo(render_diff_summary(result))
-    typer.echo(render_first_divergence(result, max_changes=max_changes))
+    _echo(render_diff_summary(result))
+    _echo(render_first_divergence(result, max_changes=max_changes))
 
 
 @app.command()
@@ -397,7 +457,7 @@ def bundle(
             signing_key_id=signing_key_id,
         )
     except (ArtifactError, FileNotFoundError) as error:
-        typer.echo(f"bundle failed: {error}", err=True)
+        _echo(f"bundle failed: {error}", err=True)
         raise typer.Exit(code=1) from error
 
     summary = {
@@ -410,9 +470,9 @@ def bundle(
     }
 
     if json_output:
-        typer.echo(json.dumps(summary, ensure_ascii=True, sort_keys=True))
+        _echo_json(summary)
     else:
-        typer.echo(f"bundle artifact: {out}")
+        _echo(f"bundle artifact: {out}")
 
 
 @app.command()
@@ -441,15 +501,9 @@ def verify(
     except (ArtifactError, FileNotFoundError, json.JSONDecodeError) as error:
         message = f"verify failed: {error}"
         if json_output:
-            typer.echo(
-                json.dumps(
-                    {"status": "error", "valid": False, "exit_code": 1, "message": message},
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-            )
+            _echo_json({"status": "error", "valid": False, "exit_code": 1, "message": message})
         else:
-            typer.echo(message, err=True)
+            _echo(message, err=True)
         raise typer.Exit(code=1) from error
 
     result = verify_artifact_signature(
@@ -463,12 +517,12 @@ def verify(
     payload["exit_code"] = 0 if result.valid else 1
 
     if json_output:
-        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        _echo_json(payload)
     else:
         if result.valid:
-            typer.echo(f"verify passed: {artifact} ({result.status})")
+            _echo(f"verify passed: {artifact} ({result.status})")
         else:
-            typer.echo(f"verify failed: {result.message}", err=True)
+            _echo(f"verify failed: {result.message}", err=True)
 
     if not result.valid:
         raise typer.Exit(code=1)
@@ -511,7 +565,7 @@ def assert_run(
     try:
         guardrail_mode: GuardrailMode = normalize_guardrail_mode(nondeterminism)
     except ValueError as error:
-        typer.echo(f"assert failed: {error}", err=True)
+        _echo(f"assert failed: {error}", err=True)
         raise typer.Exit(code=2) from error
 
     if candidate is None:
@@ -520,15 +574,9 @@ def assert_run(
             "Provide --candidate PATH."
         )
         if json_output:
-            typer.echo(
-                json.dumps(
-                    {"status": "error", "exit_code": 1, "message": message},
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-            )
+            _echo_json({"status": "error", "exit_code": 1, "message": message})
         else:
-            typer.echo(message, err=True)
+            _echo(message, err=True)
         raise typer.Exit(code=1)
 
     try:
@@ -537,15 +585,9 @@ def assert_run(
     except (ArtifactError, FileNotFoundError) as error:
         message = f"assert failed: {error}"
         if json_output:
-            typer.echo(
-                json.dumps(
-                    {"status": "error", "exit_code": 1, "message": message},
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-            )
+            _echo_json({"status": "error", "exit_code": 1, "message": message})
         else:
-            typer.echo(message, err=True)
+            _echo(message, err=True)
         raise typer.Exit(code=1) from error
 
     result = assert_runs(
@@ -580,33 +622,37 @@ def assert_run(
         payload["guardrail_failure"] = True
 
     if json_output:
-        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        _echo_json(payload)
     else:
         if result.passed:
             mode = "assert passed (strict)" if strict else "assert passed"
-            typer.echo(f"{mode}: baseline={baseline} candidate={candidate}")
+            _echo(f"{mode}: baseline={baseline} candidate={candidate}")
         else:
             if strict and result.strict_failures and result.diff.identical:
                 message = "assert failed: strict drift detected"
             else:
                 message = "assert failed: divergence detected"
-            typer.echo(f"{message} (baseline={baseline} candidate={candidate})")
-        if guardrail_failed and result.passed:
-            typer.echo(
-                "assert failed: nondeterminism indicators detected in fail mode "
-                f"(baseline={baseline} candidate={candidate})"
+            _echo(
+                f"{message} (baseline={baseline} candidate={candidate})",
+                force=True,
             )
-        typer.echo(render_diff_summary(result.diff))
-        typer.echo(render_first_divergence(result.diff, max_changes=max_changes))
+        if guardrail_failed and result.passed:
+            _echo(
+                "assert failed: nondeterminism indicators detected in fail mode "
+                f"(baseline={baseline} candidate={candidate})",
+                force=True,
+            )
+        _echo(render_diff_summary(result.diff))
+        _echo(render_first_divergence(result.diff, max_changes=max_changes))
         strict_summary = _render_strict_failures(result, max_changes=max_changes)
         if strict_summary:
-            typer.echo(strict_summary)
+            _echo(strict_summary)
         guardrail_text = render_guardrail_summary(
             mode=guardrail_mode,
             findings=guardrail_findings if guardrail_mode != "off" else [],
         )
         if guardrail_text:
-            typer.echo(guardrail_text)
+            _echo(guardrail_text)
 
     if not result.passed:
         raise typer.Exit(code=result.exit_code)
@@ -659,15 +705,9 @@ def live_compare(
             "Provide --candidate PATH or enable --live-demo."
         )
         if json_output:
-            typer.echo(
-                json.dumps(
-                    {"status": "error", "exit_code": 2, "message": message},
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-            )
+            _echo_json({"status": "error", "exit_code": 2, "message": message})
         else:
-            typer.echo(message, err=True)
+            _echo(message, err=True)
         raise typer.Exit(code=2)
 
     try:
@@ -675,15 +715,9 @@ def live_compare(
     except (ArtifactError, FileNotFoundError) as error:
         message = f"live-compare failed: {error}"
         if json_output:
-            typer.echo(
-                json.dumps(
-                    {"status": "error", "exit_code": 1, "message": message},
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-            )
+            _echo_json({"status": "error", "exit_code": 1, "message": message})
         else:
-            typer.echo(message, err=True)
+            _echo(message, err=True)
         raise typer.Exit(code=1) from error
 
     live_mode = "artifact"
@@ -707,15 +741,9 @@ def live_compare(
     except (ArtifactError, FileNotFoundError) as error:
         message = f"live-compare failed: {error}"
         if json_output:
-            typer.echo(
-                json.dumps(
-                    {"status": "error", "exit_code": 1, "message": message},
-                    ensure_ascii=True,
-                    sort_keys=True,
-                )
-            )
+            _echo_json({"status": "error", "exit_code": 1, "message": message})
         else:
-            typer.echo(message, err=True)
+            _echo(message, err=True)
         raise typer.Exit(code=1) from error
 
     result = assert_runs(
@@ -732,22 +760,25 @@ def live_compare(
     payload["exit_code"] = result.exit_code
 
     if json_output:
-        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        _echo_json(payload)
     else:
         if result.passed:
             mode = "live-compare passed (strict)" if strict else "live-compare passed"
-            typer.echo(f"{mode}: baseline={baseline} candidate={candidate_path}")
+            _echo(f"{mode}: baseline={baseline} candidate={candidate_path}")
         else:
             if strict and result.strict_failures and result.diff.identical:
                 message = "live-compare failed: strict drift detected"
             else:
                 message = "live-compare failed: divergence detected"
-            typer.echo(f"{message} (baseline={baseline} candidate={candidate_path})")
-        typer.echo(render_diff_summary(result.diff))
-        typer.echo(render_first_divergence(result.diff, max_changes=max_changes))
+            _echo(
+                f"{message} (baseline={baseline} candidate={candidate_path})",
+                force=True,
+            )
+        _echo(render_diff_summary(result.diff))
+        _echo(render_first_divergence(result.diff, max_changes=max_changes))
         strict_summary = _render_strict_failures(result, max_changes=max_changes)
         if strict_summary:
-            typer.echo(strict_summary)
+            _echo(strict_summary)
 
     if not result.passed:
         raise typer.Exit(code=result.exit_code)
@@ -819,39 +850,40 @@ def snapshot(
             "message": message,
         }
         if json_output:
-            typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+            _echo_json(payload)
         else:
-            typer.echo(message, err=True)
+            _echo(message, err=True)
         raise typer.Exit(code=1) from error
 
     payload = result.to_dict()
     if json_output:
-        typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        _echo_json(payload)
     else:
         if result.status == "updated":
-            typer.echo(
+            _echo(
                 "snapshot updated: "
                 f"name={name} baseline={result.baseline_path} source={result.candidate_path}"
             )
         elif result.status == "pass":
-            typer.echo(
+            _echo(
                 "snapshot passed: "
                 f"name={name} baseline={result.baseline_path} candidate={result.candidate_path}"
             )
         elif result.status == "fail":
-            typer.echo(
+            _echo(
                 "snapshot failed: "
-                f"name={name} baseline={result.baseline_path} candidate={result.candidate_path}"
+                f"name={name} baseline={result.baseline_path} candidate={result.candidate_path}",
+                force=True,
             )
         else:
-            typer.echo(f"snapshot failed: {result.message}", err=True)
+            _echo(f"snapshot failed: {result.message}", err=True)
 
         if result.assertion is not None:
-            typer.echo(render_diff_summary(result.assertion.diff))
-            typer.echo(render_first_divergence(result.assertion.diff, max_changes=max_changes))
+            _echo(render_diff_summary(result.assertion.diff))
+            _echo(render_first_divergence(result.assertion.diff, max_changes=max_changes))
             strict_summary = _render_strict_failures(result.assertion, max_changes=max_changes)
             if strict_summary:
-                typer.echo(strict_summary)
+                _echo(strict_summary)
 
     if result.exit_code != 0:
         raise typer.Exit(code=result.exit_code)
@@ -905,10 +937,10 @@ def ui(
         )
 
         if check:
-            typer.echo(f"ui check ok: {ui_url}")
+            _echo(f"ui check ok: {ui_url}")
             return
 
-        typer.echo(f"ui running: {ui_url}")
+        _echo(f"ui running: {ui_url}")
 
         if browser:
             webbrowser.open(ui_url)
@@ -917,7 +949,7 @@ def ui(
             while True:
                 time.sleep(0.25)
         except KeyboardInterrupt:
-            typer.echo("ui stopped")
+            _echo("ui stopped")
 
 
 def main() -> None:

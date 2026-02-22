@@ -28,6 +28,14 @@ Strict-mode drift gating:
 replaykit assert baseline.rpk --candidate candidate.rpk --strict --json
 ```
 
+Output hardening flags:
+
+```bash
+replaykit --quiet assert baseline.rpk --candidate candidate.rpk
+replaykit --no-color assert baseline.rpk --candidate candidate.rpk --json
+replaykit --stable-json assert baseline.rpk --candidate candidate.rpk --json
+```
+
 Determinism guardrails:
 
 ```bash
