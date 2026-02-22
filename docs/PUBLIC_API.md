@@ -57,6 +57,18 @@ replaykit.snapshot_assert(name, candidate, *, snapshots_dir="snapshots", update=
 - Deprecated APIs must emit warnings for at least one minor release before removal.
 - Public API tests in `tests/test_public_api_contract.py` must be updated in the same change as any public API change.
 
+## Runtime and Compatibility Guarantees
+
+- Supported Python runtime: **3.10+**.
+- Supported operating systems: **Linux**, **macOS**, and **Windows**.
+- Semantic versioning applies to public API compatibility:
+  - major: breaking API/behavior changes
+  - minor: additive public features and options
+  - patch: backward-compatible fixes
+- Artifact compatibility:
+  - existing artifact schema versions must remain readable
+  - schema changes require an explicit migration path
+
 ## Notes
 
 - `replaykit.record(...)` currently records ReplayKit's deterministic demo flow when
