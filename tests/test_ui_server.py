@@ -24,6 +24,14 @@ def test_ui_server_smoke_and_core_render_path() -> None:
         assert "<h1>ReplayKit Local Diff UI</h1>" in html
         assert "for=\"leftArtifact\"" in html
         assert "for=\"rightArtifact\"" in html
+        assert "aria-label=\"Jump to first divergence\"" in html
+        assert "aria-label=\"Show changed steps only\"" in html
+        assert "aria-label=\"Previous changed field\"" in html
+        assert "aria-label=\"Copy selected JSON path\"" in html
+        assert "aria-label=\"Diff step list\"" in html
+        assert "aria-label=\"Field-level change list\"" in html
+        assert "function jumpToFirstDivergence()" in html
+        assert "jumpButton.addEventListener(\"click\", jumpToFirstDivergence);" in html
 
         files_payload = _get_json(base_url + "/api/files")
         assert "files" in files_payload

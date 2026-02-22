@@ -201,6 +201,7 @@ def _render_index_html() -> str:
       --missing: #7c2d12;
       --muted: #6b7280;
       --border: #d6d3d1;
+      --surface: #f8f6f1;
     }
 
     * { box-sizing: border-box; }
@@ -216,15 +217,15 @@ def _render_index_html() -> str:
     }
 
     header {
-      padding: 20px 24px 12px;
+      padding: 20px 24px 14px;
       border-bottom: 1px solid var(--border);
-      background: rgba(255, 253, 250, 0.9);
+      background: rgba(255, 253, 250, 0.92);
       backdrop-filter: blur(2px);
     }
 
     h1 {
       margin: 0;
-      font-size: 1.5rem;
+      font-size: 1.52rem;
       letter-spacing: 0.02em;
     }
 
@@ -238,17 +239,17 @@ def _render_index_html() -> str:
       display: grid;
       grid-template-columns: repeat(2, minmax(260px, 1fr));
       gap: 12px;
-      margin-top: 16px;
+      margin-top: 14px;
     }
 
     label {
       display: block;
       font-size: 0.85rem;
       margin-bottom: 6px;
-      font-weight: 600;
+      font-weight: 700;
     }
 
-    input {
+    input[type="text"] {
       width: 100%;
       padding: 10px 12px;
       border: 1px solid var(--border);
@@ -261,8 +262,9 @@ def _render_index_html() -> str:
     .actions {
       margin-top: 12px;
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     button {
@@ -272,7 +274,8 @@ def _render_index_html() -> str:
       padding: 8px 12px;
       border-radius: 999px;
       cursor: pointer;
-      font-weight: 600;
+      font-weight: 700;
+      font-size: 0.85rem;
     }
 
     button.primary {
@@ -282,8 +285,25 @@ def _render_index_html() -> str:
     }
 
     button:disabled {
-      opacity: 0.5;
+      opacity: 0.45;
       cursor: not-allowed;
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.84rem;
+      padding: 4px 10px;
+      border: 1px dashed var(--border);
+      border-radius: 999px;
+      background: #fff;
+      margin: 0;
+      font-weight: 600;
+    }
+
+    .toggle input {
+      margin: 0;
     }
 
     .status {
@@ -295,7 +315,7 @@ def _render_index_html() -> str:
 
     .layout {
       display: grid;
-      grid-template-columns: 290px 1fr 340px;
+      grid-template-columns: 300px 1fr 360px;
       gap: 14px;
       padding: 16px;
     }
@@ -304,7 +324,7 @@ def _render_index_html() -> str:
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 12px;
-      min-height: 56vh;
+      min-height: 58vh;
       overflow: hidden;
     }
 
@@ -318,7 +338,7 @@ def _render_index_html() -> str:
 
     .panel-body {
       padding: 10px;
-      height: calc(56vh - 44px);
+      height: calc(58vh - 44px);
       overflow: auto;
     }
 
@@ -337,6 +357,11 @@ def _render_index_html() -> str:
       background: #fff;
       padding: 8px;
       cursor: pointer;
+      transition: border-color 120ms ease;
+    }
+
+    .step-item:hover {
+      border-color: #9ca3af;
     }
 
     .step-item.active {
@@ -344,7 +369,7 @@ def _render_index_html() -> str:
     }
 
     .step-status {
-      font-size: 0.78rem;
+      font-size: 0.75rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -354,10 +379,143 @@ def _render_index_html() -> str:
     .status-changed { color: var(--changed); }
     .status-missing_left, .status-missing_right { color: var(--missing); }
 
-    .twocol {
+    .step-title {
+      margin-top: 2px;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .step-subline {
+      margin-top: 4px;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .changes-toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .path-chip {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      font-size: 0.76rem;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .change-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 180px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .change-item {
+      border: 0;
+      border-bottom: 1px solid #ece8df;
+      padding: 8px 10px;
+      margin: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      border-radius: 0;
+      width: 100%;
+      font-weight: 600;
+    }
+
+    .change-item:last-child {
+      border-bottom: 0;
+    }
+
+    .change-item.active {
+      background: #eef7f5;
+    }
+
+    .change-item code {
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      font-size: 0.77rem;
+    }
+
+    .change-item small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .tree-columns {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
+      margin-top: 10px;
+    }
+
+    .tree-shell {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      min-height: 240px;
+      overflow: auto;
+      padding: 8px;
+    }
+
+    .tree-shell h3 {
+      margin: 0 0 6px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .tree-node {
+      margin: 3px 0;
+      border-left: 2px solid #e5e2d8;
+      padding-left: 8px;
+    }
+
+    .tree-node > summary {
+      cursor: pointer;
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      font-size: 0.78rem;
+      color: #374151;
+      user-select: text;
+    }
+
+    .tree-children {
+      margin-left: 6px;
+      padding-left: 8px;
+      border-left: 1px dashed #d9d5cb;
+    }
+
+    .tree-leaf {
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      font-size: 0.78rem;
+      margin: 3px 0;
+      color: #1f2937;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .tree-key {
+      color: #6b7280;
+      margin-right: 4px;
     }
 
     pre {
@@ -368,8 +526,8 @@ def _render_index_html() -> str:
       background: #fff;
       overflow: auto;
       font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
-      font-size: 0.83rem;
-      min-height: 200px;
+      font-size: 0.82rem;
+      min-height: 230px;
       white-space: pre-wrap;
       word-break: break-word;
     }
@@ -380,18 +538,18 @@ def _render_index_html() -> str:
       font-style: italic;
     }
 
-    @media (max-width: 1100px) {
+    @media (max-width: 1200px) {
       .layout {
         grid-template-columns: 1fr;
       }
       .panel {
-        min-height: 300px;
+        min-height: 320px;
       }
       .panel-body {
         height: auto;
-        min-height: 220px;
+        min-height: 230px;
       }
-      .twocol {
+      .tree-columns {
         grid-template-columns: 1fr;
       }
     }
@@ -400,16 +558,16 @@ def _render_index_html() -> str:
 <body>
   <header>
     <h1>ReplayKit Local Diff UI</h1>
-    <div class="sub">Inspect two local artifacts, jump to first divergence, and review step-level context.</div>
+    <div class="sub">Inspect local artifacts with changed-only filtering, quick navigation, and collapsible JSON trees.</div>
 
     <div class="controls">
       <div>
         <label for="leftArtifact">Left Artifact Path</label>
-        <input id="leftArtifact" name="leftArtifact" list="artifactOptions" placeholder="examples/runs/m2_capture_boundaries.rpk" />
+        <input id="leftArtifact" name="leftArtifact" type="text" list="artifactOptions" placeholder="examples/runs/m2_capture_boundaries.rpk" />
       </div>
       <div>
         <label for="rightArtifact">Right Artifact Path</label>
-        <input id="rightArtifact" name="rightArtifact" list="artifactOptions" placeholder="examples/runs/m4_diverged_from_m2.rpk" />
+        <input id="rightArtifact" name="rightArtifact" type="text" list="artifactOptions" placeholder="examples/runs/m4_diverged_from_m2.rpk" />
       </div>
     </div>
 
@@ -418,6 +576,14 @@ def _render_index_html() -> str:
     <div class="actions">
       <button id="loadButton" class="primary" aria-label="Load diff">Load Diff</button>
       <button id="jumpButton" aria-label="Jump to first divergence" disabled>Jump To First Divergence</button>
+      <button id="prevStepButton" aria-label="Previous visible step" disabled>Prev Step</button>
+      <button id="nextStepButton" aria-label="Next visible step" disabled>Next Step</button>
+      <button id="prevChangedButton" aria-label="Previous changed step" disabled>Prev Changed</button>
+      <button id="nextChangedButton" aria-label="Next changed step" disabled>Next Changed</button>
+      <label class="toggle" for="changedOnlyToggle">
+        <input id="changedOnlyToggle" type="checkbox" aria-label="Show changed steps only" />
+        Changed Only
+      </label>
     </div>
     <div id="status" class="status" aria-live="polite"></div>
   </header>
@@ -426,7 +592,7 @@ def _render_index_html() -> str:
     <section class="panel" aria-labelledby="stepsHeading">
       <h2 id="stepsHeading">Steps</h2>
       <div class="panel-body">
-        <ul id="stepList" class="steps"></ul>
+        <ul id="stepList" class="steps" aria-label="Diff step list"></ul>
         <div id="stepEmpty" class="empty">Load artifacts to view step statuses.</div>
       </div>
     </section>
@@ -434,14 +600,22 @@ def _render_index_html() -> str:
     <section class="panel" aria-labelledby="changesHeading">
       <h2 id="changesHeading">Changes</h2>
       <div class="panel-body">
-        <div class="twocol">
-          <div>
-            <h3>Left Value</h3>
-            <pre id="leftValue">No step selected.</pre>
+        <div class="changes-toolbar">
+          <button id="prevFieldButton" aria-label="Previous changed field" disabled>Prev Field</button>
+          <button id="nextFieldButton" aria-label="Next changed field" disabled>Next Field</button>
+          <button id="copyPathButton" aria-label="Copy selected JSON path" disabled>Copy JSON Path</button>
+          <div id="selectedPath" class="path-chip" title="Selected JSON path">No path selected.</div>
+        </div>
+        <ul id="changeList" class="change-list" aria-label="Field-level change list"></ul>
+        <div id="changeEmpty" class="empty">Select a changed step to inspect field-level diffs.</div>
+        <div class="tree-columns">
+          <div class="tree-shell" aria-label="Left change JSON tree">
+            <h3>Left</h3>
+            <div id="leftTree"></div>
           </div>
-          <div>
-            <h3>Right Value</h3>
-            <pre id="rightValue">No step selected.</pre>
+          <div class="tree-shell" aria-label="Right change JSON tree">
+            <h3>Right</h3>
+            <div id="rightTree"></div>
           </div>
         </div>
       </div>
@@ -458,8 +632,10 @@ def _render_index_html() -> str:
   <script>
     const state = {
       diff: null,
-      selectedIndex: null,
       files: [],
+      visibleStepIndexes: [],
+      selectedVisibleStepIndex: null,
+      selectedChangeIndex: null,
     };
 
     const statusEl = document.getElementById("status");
@@ -468,10 +644,21 @@ def _render_index_html() -> str:
     const optionsEl = document.getElementById("artifactOptions");
     const stepList = document.getElementById("stepList");
     const stepEmpty = document.getElementById("stepEmpty");
-    const leftValue = document.getElementById("leftValue");
-    const rightValue = document.getElementById("rightValue");
+    const changeList = document.getElementById("changeList");
+    const changeEmpty = document.getElementById("changeEmpty");
+    const leftTree = document.getElementById("leftTree");
+    const rightTree = document.getElementById("rightTree");
     const metaPanel = document.getElementById("metaPanel");
+    const selectedPath = document.getElementById("selectedPath");
     const jumpButton = document.getElementById("jumpButton");
+    const prevStepButton = document.getElementById("prevStepButton");
+    const nextStepButton = document.getElementById("nextStepButton");
+    const prevChangedButton = document.getElementById("prevChangedButton");
+    const nextChangedButton = document.getElementById("nextChangedButton");
+    const changedOnlyToggle = document.getElementById("changedOnlyToggle");
+    const prevFieldButton = document.getElementById("prevFieldButton");
+    const nextFieldButton = document.getElementById("nextFieldButton");
+    const copyPathButton = document.getElementById("copyPathButton");
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
@@ -480,6 +667,18 @@ def _render_index_html() -> str:
 
     function pretty(value) {
       return JSON.stringify(value, null, 2);
+    }
+
+    function describeValue(value) {
+      if (Array.isArray(value)) return "array(" + value.length + ")";
+      if (value && typeof value === "object") return "object(" + Object.keys(value).length + ")";
+      return typeof value;
+    }
+
+    function formatInline(value) {
+      if (typeof value === "string") return JSON.stringify(value);
+      if (value === undefined) return "undefined";
+      return JSON.stringify(value);
     }
 
     function parseQueryDefaults() {
@@ -518,71 +717,323 @@ def _render_index_html() -> str:
       }
     }
 
-    function renderStepDetails(stepDiff) {
-      const leftMap = {};
-      const rightMap = {};
-      for (const change of stepDiff.changes || []) {
-        leftMap[change.path] = change.left;
-        rightMap[change.path] = change.right;
+    function getVisibleStepIndexes() {
+      if (!state.diff || !state.diff.step_diffs) {
+        return [];
       }
-
-      leftValue.textContent = Object.keys(leftMap).length ? pretty(leftMap) : "No changes in selected step.";
-      rightValue.textContent = Object.keys(rightMap).length ? pretty(rightMap) : "No changes in selected step.";
-
-      const meta = {
-        index: stepDiff.index,
-        status: stepDiff.status,
-        left_step_id: stepDiff.left_step_id,
-        right_step_id: stepDiff.right_step_id,
-        left_type: stepDiff.left_type,
-        right_type: stepDiff.right_type,
-        context: stepDiff.context,
-        change_count: (stepDiff.changes || []).length,
-      };
-      metaPanel.textContent = pretty(meta);
+      const onlyChanged = changedOnlyToggle.checked;
+      const indexes = [];
+      state.diff.step_diffs.forEach((step, idx) => {
+        if (!onlyChanged || step.status !== "identical") {
+          indexes.push(idx);
+        }
+      });
+      return indexes;
     }
 
-    function selectStep(index) {
-      state.selectedIndex = index;
-      renderStepList();
-      const step = state.diff.step_diffs[index];
-      renderStepDetails(step);
+    function getChangedStepIndexes() {
+      if (!state.diff || !state.diff.step_diffs) {
+        return [];
+      }
+      const indexes = [];
+      state.diff.step_diffs.forEach((step, idx) => {
+        if (step.status !== "identical") {
+          indexes.push(idx);
+        }
+      });
+      return indexes;
+    }
+
+    function currentStepDiff() {
+      if (!state.diff || state.selectedVisibleStepIndex === null) {
+        return null;
+      }
+      const absoluteIndex = state.visibleStepIndexes[state.selectedVisibleStepIndex];
+      if (absoluteIndex === undefined) {
+        return null;
+      }
+      return state.diff.step_diffs[absoluteIndex];
+    }
+
+    function createTreeNode(label, value, depth) {
+      const isObject = value !== null && typeof value === "object";
+      if (!isObject) {
+        const row = document.createElement("div");
+        row.className = "tree-leaf";
+        const key = document.createElement("span");
+        key.className = "tree-key";
+        key.textContent = label + ":";
+        const val = document.createElement("span");
+        val.textContent = " " + formatInline(value);
+        row.appendChild(key);
+        row.appendChild(val);
+        return row;
+      }
+
+      const details = document.createElement("details");
+      details.className = "tree-node";
+      if (depth <= 1) {
+        details.open = true;
+      }
+
+      const summary = document.createElement("summary");
+      summary.textContent = label + " " + describeValue(value);
+      details.appendChild(summary);
+
+      const children = document.createElement("div");
+      children.className = "tree-children";
+
+      if (Array.isArray(value)) {
+        if (value.length === 0) {
+          children.appendChild(createTreeNode("(empty)", "", depth + 1));
+        } else {
+          value.forEach((item, idx) => {
+            children.appendChild(createTreeNode("[" + idx + "]", item, depth + 1));
+          });
+        }
+      } else {
+        const keys = Object.keys(value).sort();
+        if (keys.length === 0) {
+          children.appendChild(createTreeNode("(empty)", "", depth + 1));
+        } else {
+          keys.forEach((key) => {
+            children.appendChild(createTreeNode(key, value[key], depth + 1));
+          });
+        }
+      }
+
+      details.appendChild(children);
+      return details;
+    }
+
+    function renderJsonTree(target, value, label) {
+      target.innerHTML = "";
+      target.appendChild(createTreeNode(label, value, 0));
+    }
+
+    function renderMetadata(stepDiff) {
+      if (!state.diff) {
+        metaPanel.textContent = "No diff loaded.";
+        return;
+      }
+
+      const base = {
+        left_path: state.diff.left_path,
+        right_path: state.diff.right_path,
+        summary: state.diff.summary,
+        first_divergence_index: state.diff.first_divergence ? state.diff.first_divergence.index : null,
+      };
+
+      if (!stepDiff) {
+        metaPanel.textContent = pretty(base);
+        return;
+      }
+
+      const activeChange = (stepDiff.changes || [])[state.selectedChangeIndex || 0] || null;
+      metaPanel.textContent = pretty({
+        ...base,
+        selected_step: {
+          index: stepDiff.index,
+          status: stepDiff.status,
+          left_step_id: stepDiff.left_step_id,
+          right_step_id: stepDiff.right_step_id,
+          left_type: stepDiff.left_type,
+          right_type: stepDiff.right_type,
+          change_count: (stepDiff.changes || []).length,
+          context: stepDiff.context,
+        },
+        selected_change_path: activeChange ? activeChange.path : null,
+      });
+    }
+
+    function renderSelectedChange(stepDiff) {
+      const changes = stepDiff.changes || [];
+      if (!changes.length) {
+        leftTree.innerHTML = "<div class='empty'>No change payload for this step.</div>";
+        rightTree.innerHTML = "<div class='empty'>No change payload for this step.</div>";
+        selectedPath.textContent = "No path selected.";
+        return;
+      }
+
+      if (
+        state.selectedChangeIndex === null ||
+        state.selectedChangeIndex < 0 ||
+        state.selectedChangeIndex >= changes.length
+      ) {
+        state.selectedChangeIndex = 0;
+      }
+
+      const active = changes[state.selectedChangeIndex];
+      selectedPath.textContent = active.path;
+      renderJsonTree(leftTree, active.left, "left");
+      renderJsonTree(rightTree, active.right, "right");
+
+      const buttons = changeList.querySelectorAll("button.change-item");
+      buttons.forEach((button) => {
+        const index = Number(button.dataset.changeIndex || "-1");
+        if (index === state.selectedChangeIndex) {
+          button.classList.add("active");
+        } else {
+          button.classList.remove("active");
+        }
+      });
+    }
+
+    function renderChangeList(stepDiff) {
+      changeList.innerHTML = "";
+      const changes = stepDiff.changes || [];
+      if (!changes.length) {
+        changeEmpty.style.display = "block";
+        leftTree.innerHTML = "<div class='empty'>No selected change.</div>";
+        rightTree.innerHTML = "<div class='empty'>No selected change.</div>";
+        selectedPath.textContent = "No path selected.";
+        return;
+      }
+
+      changeEmpty.style.display = "none";
+      changes.forEach((change, idx) => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.className = "change-item";
+        button.type = "button";
+        button.dataset.changeIndex = String(idx);
+        button.setAttribute("aria-label", "Change path " + change.path);
+
+        const code = document.createElement("code");
+        code.textContent = change.path;
+        const preview = document.createElement("small");
+        preview.textContent = "left: " + formatInline(change.left) + " | right: " + formatInline(change.right);
+
+        button.appendChild(code);
+        button.appendChild(preview);
+        button.addEventListener("click", () => {
+          state.selectedChangeIndex = idx;
+          renderSelectedChange(stepDiff);
+          renderMetadata(stepDiff);
+          updateNavigationButtons();
+        });
+        item.appendChild(button);
+        changeList.appendChild(item);
+      });
+
+      renderSelectedChange(stepDiff);
     }
 
     function renderStepList() {
       stepList.innerHTML = "";
-      if (!state.diff || !state.diff.step_diffs || state.diff.step_diffs.length === 0) {
+      const noDiff = !state.diff || !state.diff.step_diffs || state.diff.step_diffs.length === 0;
+      if (noDiff) {
         stepEmpty.style.display = "block";
         return;
       }
 
+      if (state.visibleStepIndexes.length === 0) {
+        stepEmpty.style.display = "block";
+        stepEmpty.textContent = "No steps match current filter.";
+        return;
+      }
+
       stepEmpty.style.display = "none";
-      state.diff.step_diffs.forEach((step, idx) => {
+      stepEmpty.textContent = "Load artifacts to view step statuses.";
+      state.visibleStepIndexes.forEach((absoluteIndex, visibleIndex) => {
+        const step = state.diff.step_diffs[absoluteIndex];
         const item = document.createElement("li");
-        item.className = "step-item" + (state.selectedIndex === idx ? " active" : "");
+        item.className = "step-item" + (state.selectedVisibleStepIndex === visibleIndex ? " active" : "");
         item.setAttribute("role", "button");
         item.setAttribute("tabindex", "0");
+        item.setAttribute("aria-label", "Step " + step.index + " " + step.status);
 
         const label = document.createElement("div");
         label.className = "step-status status-" + step.status;
         label.textContent = step.status;
 
         const title = document.createElement("div");
+        title.className = "step-title";
         title.textContent = "#" + step.index + " " + (step.left_type || step.right_type || "unknown");
+
+        const subline = document.createElement("div");
+        subline.className = "step-subline";
+        subline.textContent = (step.changes || []).length + " field change(s)";
 
         item.appendChild(label);
         item.appendChild(title);
+        item.appendChild(subline);
 
-        item.addEventListener("click", () => selectStep(idx));
+        item.addEventListener("click", () => selectStepByVisibleIndex(visibleIndex));
         item.addEventListener("keydown", (event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            selectStep(idx);
+            selectStepByVisibleIndex(visibleIndex);
           }
         });
 
         stepList.appendChild(item);
       });
+    }
+
+    function updateNavigationButtons() {
+      const hasDiff = !!state.diff;
+      const hasVisible = state.visibleStepIndexes.length > 0;
+      const hasSelectedStep = hasVisible && state.selectedVisibleStepIndex !== null;
+      const selectedStep = currentStepDiff();
+      const selectedChanges = selectedStep ? (selectedStep.changes || []) : [];
+
+      jumpButton.disabled = !(hasDiff && state.diff.first_divergence);
+      prevStepButton.disabled = !(hasSelectedStep && state.selectedVisibleStepIndex > 0);
+      nextStepButton.disabled = !(
+        hasSelectedStep && state.selectedVisibleStepIndex < state.visibleStepIndexes.length - 1
+      );
+
+      const changedSteps = getChangedStepIndexes();
+      prevChangedButton.disabled = changedSteps.length === 0;
+      nextChangedButton.disabled = changedSteps.length === 0;
+
+      const selectedChange = state.selectedChangeIndex;
+      prevFieldButton.disabled = !(selectedChanges.length > 1 && selectedChange !== null && selectedChange > 0);
+      nextFieldButton.disabled = !(
+        selectedChanges.length > 1 &&
+        selectedChange !== null &&
+        selectedChange < selectedChanges.length - 1
+      );
+      copyPathButton.disabled = !(selectedChanges.length > 0 && selectedChange !== null);
+    }
+
+    function selectStepByVisibleIndex(index) {
+      if (index < 0 || index >= state.visibleStepIndexes.length) {
+        return;
+      }
+      state.selectedVisibleStepIndex = index;
+      state.selectedChangeIndex = 0;
+      renderStepList();
+
+      const step = currentStepDiff();
+      if (!step) {
+        changeList.innerHTML = "";
+        leftTree.innerHTML = "<div class='empty'>No selected step.</div>";
+        rightTree.innerHTML = "<div class='empty'>No selected step.</div>";
+        selectedPath.textContent = "No path selected.";
+        renderMetadata(null);
+      } else {
+        renderChangeList(step);
+        renderMetadata(step);
+      }
+
+      updateNavigationButtons();
+    }
+
+    function selectStepByAbsoluteIndex(absoluteIndex) {
+      const visibleIndex = state.visibleStepIndexes.indexOf(absoluteIndex);
+      if (visibleIndex >= 0) {
+        selectStepByVisibleIndex(visibleIndex);
+        return;
+      }
+
+      changedOnlyToggle.checked = false;
+      state.visibleStepIndexes = getVisibleStepIndexes();
+      const fallbackIndex = state.visibleStepIndexes.indexOf(absoluteIndex);
+      if (fallbackIndex >= 0) {
+        selectStepByVisibleIndex(fallbackIndex);
+      }
     }
 
     async function loadDiff() {
@@ -607,8 +1058,9 @@ def _render_index_html() -> str:
         }
 
         state.diff = payload;
-        const first = payload.first_divergence;
-        jumpButton.disabled = !first;
+        state.visibleStepIndexes = getVisibleStepIndexes();
+        state.selectedVisibleStepIndex = null;
+        state.selectedChangeIndex = null;
 
         const summary = payload.summary || {};
         setStatus(
@@ -618,18 +1070,12 @@ def _render_index_html() -> str:
             " missing_right=" + (summary.missing_right || 0)
         );
 
-        state.selectedIndex = 0;
         renderStepList();
-        if (payload.step_diffs && payload.step_diffs.length > 0) {
-          renderStepDetails(payload.step_diffs[0]);
+        if (state.visibleStepIndexes.length > 0) {
+          selectStepByVisibleIndex(0);
         } else {
-          leftValue.textContent = "No steps available.";
-          rightValue.textContent = "No steps available.";
-          metaPanel.textContent = pretty({
-            left_path: payload.left_path,
-            right_path: payload.right_path,
-            identical: payload.identical,
-          });
+          renderMetadata(null);
+          updateNavigationButtons();
         }
       } catch (_err) {
         setStatus("Unable to fetch diff from local server.", true);
@@ -640,14 +1086,139 @@ def _render_index_html() -> str:
       if (!state.diff || !state.diff.first_divergence) {
         return;
       }
-      const target = state.diff.first_divergence.index - 1;
-      if (target >= 0) {
-        selectStep(target);
+      const absoluteTarget = state.diff.first_divergence.index - 1;
+      if (absoluteTarget >= 0) {
+        selectStepByAbsoluteIndex(absoluteTarget);
       }
+    }
+
+    function stepNav(delta) {
+      if (state.selectedVisibleStepIndex === null) {
+        return;
+      }
+      selectStepByVisibleIndex(state.selectedVisibleStepIndex + delta);
+    }
+
+    function changedNav(delta) {
+      const changed = getChangedStepIndexes();
+      if (changed.length === 0) {
+        return;
+      }
+
+      if (state.selectedVisibleStepIndex === null) {
+        selectStepByAbsoluteIndex(changed[0]);
+        return;
+      }
+
+      const currentAbsolute = state.visibleStepIndexes[state.selectedVisibleStepIndex];
+      let currentPosition = changed.indexOf(currentAbsolute);
+
+      if (currentPosition < 0) {
+        if (delta > 0) {
+          const next = changed.find((idx) => idx > currentAbsolute);
+          selectStepByAbsoluteIndex(next !== undefined ? next : changed[0]);
+          return;
+        }
+        const reversed = changed.slice().reverse();
+        const prev = reversed.find((idx) => idx < currentAbsolute);
+        selectStepByAbsoluteIndex(prev !== undefined ? prev : changed[changed.length - 1]);
+        return;
+      }
+
+      currentPosition += delta;
+      if (currentPosition < 0) {
+        currentPosition = changed.length - 1;
+      }
+      if (currentPosition >= changed.length) {
+        currentPosition = 0;
+      }
+      selectStepByAbsoluteIndex(changed[currentPosition]);
+    }
+
+    function changeNav(delta) {
+      const step = currentStepDiff();
+      if (!step) {
+        return;
+      }
+      const changes = step.changes || [];
+      if (changes.length === 0 || state.selectedChangeIndex === null) {
+        return;
+      }
+      const target = state.selectedChangeIndex + delta;
+      if (target < 0 || target >= changes.length) {
+        return;
+      }
+      state.selectedChangeIndex = target;
+      renderSelectedChange(step);
+      renderMetadata(step);
+      updateNavigationButtons();
+    }
+
+    async function copySelectedPath() {
+      const step = currentStepDiff();
+      if (!step || !step.changes || step.changes.length === 0 || state.selectedChangeIndex === null) {
+        return;
+      }
+      const path = step.changes[state.selectedChangeIndex].path;
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(path);
+        } else {
+          const temp = document.createElement("textarea");
+          temp.value = path;
+          document.body.appendChild(temp);
+          temp.select();
+          document.execCommand("copy");
+          document.body.removeChild(temp);
+        }
+        setStatus("Copied JSON path: " + path);
+      } catch (_err) {
+        setStatus("Unable to copy JSON path from browser context.", true);
+      }
+    }
+
+    function applyStepFilter() {
+      const previousAbsolute =
+        state.selectedVisibleStepIndex === null
+          ? null
+          : state.visibleStepIndexes[state.selectedVisibleStepIndex];
+
+      state.visibleStepIndexes = getVisibleStepIndexes();
+      if (state.visibleStepIndexes.length === 0) {
+        state.selectedVisibleStepIndex = null;
+        state.selectedChangeIndex = null;
+        renderStepList();
+        changeList.innerHTML = "";
+        changeEmpty.style.display = "block";
+        leftTree.innerHTML = "<div class='empty'>No selected step.</div>";
+        rightTree.innerHTML = "<div class='empty'>No selected step.</div>";
+        selectedPath.textContent = "No path selected.";
+        renderMetadata(null);
+        updateNavigationButtons();
+        return;
+      }
+
+      if (previousAbsolute !== null) {
+        const nextVisible = state.visibleStepIndexes.indexOf(previousAbsolute);
+        state.selectedVisibleStepIndex = nextVisible >= 0 ? nextVisible : 0;
+      } else {
+        state.selectedVisibleStepIndex = 0;
+      }
+
+      selectStepByVisibleIndex(state.selectedVisibleStepIndex);
     }
 
     document.getElementById("loadButton").addEventListener("click", loadDiff);
     jumpButton.addEventListener("click", jumpToFirstDivergence);
+    prevStepButton.addEventListener("click", () => stepNav(-1));
+    nextStepButton.addEventListener("click", () => stepNav(1));
+    prevChangedButton.addEventListener("click", () => changedNav(-1));
+    nextChangedButton.addEventListener("click", () => changedNav(1));
+    prevFieldButton.addEventListener("click", () => changeNav(-1));
+    nextFieldButton.addEventListener("click", () => changeNav(1));
+    copyPathButton.addEventListener("click", copySelectedPath);
+    changedOnlyToggle.addEventListener("change", applyStepFilter);
 
     parseQueryDefaults();
     loadArtifactOptions();
