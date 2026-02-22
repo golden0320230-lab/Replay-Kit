@@ -27,6 +27,7 @@ replaykit = "replaypack.cli.app:main"
 
 [tool.setuptools]
 packages = [
+  "replaykit",
   "replaypack",
   "replaypack.core",
   "replaypack.capture",

@@ -92,6 +92,16 @@ Launch the local UI:
 replaykit ui --left examples/runs/m2_capture_boundaries.rpk --right examples/runs/m4_diverged_from_m2.rpk
 ```
 
+Stable Python API import:
+
+```python
+import replaykit
+
+replaykit.record("runs/demo.rpk")
+result = replaykit.diff("examples/runs/m2_capture_boundaries.rpk", "examples/runs/m4_diverged_from_m2.rpk")
+print(result.first_divergence.index if result.first_divergence else "no divergence")
+```
+
 ## License
 
 MIT
