@@ -69,6 +69,16 @@ Replay it offline into a deterministic output artifact:
 replaykit replay runs/demo-recording.rpk --out runs/replay-output.rpk --seed 42 --fixed-clock 2026-02-21T18:00:00Z
 ```
 
+Run hybrid replay (rerun selected boundaries from another run, stub everything else):
+
+```bash
+replaykit replay runs/demo-recording.rpk \
+  --mode hybrid \
+  --rerun-from runs/manual/rerun-candidate.rpk \
+  --rerun-type model.response \
+  --out runs/hybrid-output.rpk
+```
+
 Diff two artifacts and stop at first divergence:
 
 ```bash
@@ -100,6 +110,13 @@ Enable strict drift checks (environment/runtime metadata + step metadata):
 replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --strict --json
 ```
 
+Enable determinism guardrails in assert/replay paths:
+
+```bash
+replaykit replay runs/demo-recording.rpk --nondeterminism warn
+replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --nondeterminism fail --json
+```
+
 Launch the local UI:
 
 ```bash
@@ -112,6 +129,13 @@ Stable Python API import:
 import replaykit
 
 replaykit.record("runs/demo.rpk")
+replaykit.replay(
+    "runs/demo.rpk",
+    out="runs/hybrid-demo.rpk",
+    mode="hybrid",
+    rerun_from="runs/manual/rerun-candidate.rpk",
+    rerun_step_types=("model.response",),
+)
 result = replaykit.diff("examples/runs/m2_capture_boundaries.rpk", "examples/runs/m4_diverged_from_m2.rpk")
 print(result.first_divergence.index if result.first_divergence else "no divergence")
 ```

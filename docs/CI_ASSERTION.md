@@ -25,6 +25,13 @@ Strict-mode drift gating:
 replaykit assert baseline.rpk --candidate candidate.rpk --strict --json
 ```
 
+Determinism guardrails:
+
+```bash
+replaykit assert baseline.rpk --candidate candidate.rpk --nondeterminism warn --json
+replaykit assert baseline.rpk --candidate candidate.rpk --nondeterminism fail --json
+```
+
 ## Local Reproduction (matches CI)
 
 ```bash

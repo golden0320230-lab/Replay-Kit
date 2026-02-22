@@ -5,6 +5,39 @@ from typer.testing import CliRunner
 
 from replaypack.artifact import read_artifact, write_artifact
 from replaypack.cli.app import app
+from replaypack.core.models import Run, Step
+
+
+def _guardrail_run(run_id: str, request_id: str, *, uses_random: bool = True) -> Run:
+    runtime_versions = {
+        "python": "3.12.0",
+        "replaykit": "0.1.0",
+    }
+    if uses_random:
+        runtime_versions["uses_random"] = "true"
+
+    return Run(
+        id=run_id,
+        timestamp="2026-02-22T18:30:00Z",
+        environment_fingerprint={"os": "macOS"},
+        runtime_versions=runtime_versions,
+        steps=[
+            Step(
+                id="step-001",
+                type="model.request",
+                input={"prompt": "hello"},
+                output={"status": "sent"},
+                metadata={"provider": "openai"},
+            ),
+            Step(
+                id="step-002",
+                type="model.response",
+                input={"request_id": request_id},
+                output={"content": "hi", "timestamp": "2026-02-22T18:30:00Z"},
+                metadata={"provider": "openai"},
+            ),
+        ],
+    )
 
 
 def test_cli_assert_passes_with_identical_artifacts() -> None:
@@ -184,3 +217,109 @@ def test_cli_assert_missing_file_returns_non_zero() -> None:
     )
 
     assert result.exit_code == 1
+
+
+def test_cli_assert_guardrail_warn_mode_reports_findings(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.rpk"
+    candidate_path = tmp_path / "candidate.rpk"
+    write_artifact(_guardrail_run("run-guardrail-base", "req-001"), baseline_path)
+    write_artifact(_guardrail_run("run-guardrail-cand", "req-001"), candidate_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "assert",
+            str(baseline_path),
+            "--candidate",
+            str(candidate_path),
+            "--nondeterminism",
+            "warn",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "pass"
+    assert payload["nondeterminism"]["status"] == "warn"
+    assert payload["nondeterminism"]["count"] >= 1
+
+
+def test_cli_assert_guardrail_fail_mode_enforces_non_zero(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.rpk"
+    candidate_path = tmp_path / "candidate.rpk"
+    write_artifact(_guardrail_run("run-guardrail-base", "req-001"), baseline_path)
+    write_artifact(_guardrail_run("run-guardrail-cand", "req-001"), candidate_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "assert",
+            str(baseline_path),
+            "--candidate",
+            str(candidate_path),
+            "--nondeterminism",
+            "fail",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "fail"
+    assert payload["exit_code"] == 1
+    assert payload["guardrail_failure"] is True
+    assert payload["nondeterminism"]["status"] == "fail"
+
+
+def test_cli_assert_guardrail_detects_diff_volatile_fields(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.rpk"
+    candidate_path = tmp_path / "candidate.rpk"
+    baseline = _guardrail_run("run-guardrail-base", "req-001", uses_random=False)
+    candidate = _guardrail_run("run-guardrail-cand", "req-001", uses_random=False)
+    candidate.steps[1].output["timestamp"] = "2026-02-22T19:30:00Z"
+    write_artifact(baseline, baseline_path)
+    write_artifact(candidate, candidate_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "assert",
+            str(baseline_path),
+            "--candidate",
+            str(candidate_path),
+            "--nondeterminism",
+            "warn",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout.strip())
+    assert payload["nondeterminism"]["count"] >= 1
+    assert any(
+        finding["source"] == "diff"
+        for finding in payload["nondeterminism"]["findings"]
+    )
+
+
+def test_cli_assert_rejects_invalid_guardrail_mode() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "assert",
+            "examples/runs/m2_capture_boundaries.rpk",
+            "--candidate",
+            "examples/runs/m2_capture_boundaries.rpk",
+            "--nondeterminism",
+            "invalid",
+        ],
+    )
+
+    assert result.exit_code == 2
+    combined = result.stdout + result.stderr
+    assert "Invalid nondeterminism mode" in combined

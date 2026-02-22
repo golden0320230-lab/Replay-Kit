@@ -13,11 +13,16 @@ from replaypack.capture import build_demo_run
 from replaypack.diff import assert_runs, diff_runs
 from replaypack.diff.assertion import AssertionResult
 from replaypack.diff.models import RunDiffResult
-from replaypack.replay import ReplayConfig, write_replay_stub_artifact
+from replaypack.replay import (
+    HybridReplayPolicy,
+    ReplayConfig,
+    write_replay_hybrid_artifact,
+    write_replay_stub_artifact,
+)
 
 __version__ = "0.1.0"
 
-ReplayMode = Literal["stub"]
+ReplayMode = Literal["stub", "hybrid"]
 
 
 # NOTE: This function currently records the deterministic demo workflow.
@@ -57,15 +62,21 @@ def replay(
     mode: ReplayMode = "stub",
     seed: int = 0,
     fixed_clock: str = "2026-01-01T00:00:00Z",
+    rerun_from: str | Path | None = None,
+    rerun_step_types: tuple[str, ...] = (),
+    rerun_step_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Replay an artifact in deterministic stub mode.
+    """Replay an artifact in deterministic stub or hybrid mode.
 
     Args:
         path: Source artifact path.
         out: Output replay artifact path.
-        mode: Replay mode. Only ``"stub"`` is supported.
+        mode: Replay mode (``"stub"`` or ``"hybrid"``).
         seed: Deterministic replay seed.
         fixed_clock: Fixed replay timestamp in ISO-8601 with timezone.
+        rerun_from: Required in hybrid mode. Artifact used as rerun source.
+        rerun_step_types: Hybrid mode step-type selectors to rerun.
+        rerun_step_ids: Hybrid mode step-id selectors to rerun.
 
     Returns:
         Replay artifact envelope.
@@ -73,12 +84,28 @@ def replay(
     Raises:
         ValueError: If unsupported replay mode is provided.
     """
-    if mode != "stub":
+    if mode not in {"stub", "hybrid"}:
         raise ValueError(f"Unsupported replay mode: {mode}")
 
     source_run = read_artifact(path)
     config = ReplayConfig(seed=seed, fixed_clock=fixed_clock)
-    return write_replay_stub_artifact(source_run, str(out), config=config)
+    if mode == "stub":
+        return write_replay_stub_artifact(source_run, str(out), config=config)
+
+    if rerun_from is None:
+        raise ValueError("replay(..., mode='hybrid') requires rerun_from")
+    policy = HybridReplayPolicy(
+        rerun_step_types=tuple(rerun_step_types),
+        rerun_step_ids=tuple(rerun_step_ids),
+    )
+    rerun_run = read_artifact(rerun_from)
+    return write_replay_hybrid_artifact(
+        source_run,
+        rerun_run,
+        str(out),
+        config=config,
+        policy=policy,
+    )
 
 
 def diff(

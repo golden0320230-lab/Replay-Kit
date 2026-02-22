@@ -15,6 +15,7 @@ from replaypack.artifact import (
     write_bundle_artifact,
 )
 from replaypack.capture import build_demo_run
+from replaypack.core.types import STEP_TYPES
 from replaypack.diff import (
     AssertionResult,
     assert_runs,
@@ -22,7 +23,21 @@ from replaypack.diff import (
     render_diff_summary,
     render_first_divergence,
 )
-from replaypack.replay import ReplayConfig, ReplayError, write_replay_stub_artifact
+from replaypack.guardrails import (
+    GuardrailMode,
+    detect_diff_nondeterminism,
+    detect_run_nondeterminism,
+    guardrail_payload,
+    normalize_guardrail_mode,
+    render_guardrail_summary,
+)
+from replaypack.replay import (
+    HybridReplayPolicy,
+    ReplayConfig,
+    ReplayError,
+    write_replay_hybrid_artifact,
+    write_replay_stub_artifact,
+)
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
@@ -124,29 +139,167 @@ def replay(
         "--json",
         help="Emit machine-readable replay summary.",
     ),
+    mode: str = typer.Option(
+        "stub",
+        "--mode",
+        help="Replay mode: stub or hybrid.",
+    ),
+    rerun_from: Path | None = typer.Option(
+        None,
+        "--rerun-from",
+        help="Rerun source artifact path (required in hybrid mode).",
+    ),
+    rerun_type: list[str] | None = typer.Option(
+        None,
+        "--rerun-type",
+        help=(
+            "Repeatable step-type selector to rerun in hybrid mode "
+            "(for example: model.response)."
+        ),
+    ),
+    rerun_step_id: list[str] | None = typer.Option(
+        None,
+        "--rerun-step-id",
+        help="Repeatable step-id selector to rerun in hybrid mode.",
+    ),
+    nondeterminism: str = typer.Option(
+        "off",
+        "--nondeterminism",
+        help="Determinism guardrail mode: off, warn, fail.",
+    ),
 ) -> None:
-    """Replay a recorded artifact in offline stub mode."""
+    """Replay a recorded artifact in offline stub or hybrid mode."""
+    replay_mode = mode.strip().lower()
+    if replay_mode not in {"stub", "hybrid"}:
+        typer.echo(
+            f"replay failed: invalid replay mode '{mode}'. Expected stub or hybrid.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    rerun_type_values = tuple(rerun_type or [])
+    rerun_step_id_values = tuple(rerun_step_id or [])
+    if replay_mode == "hybrid":
+        if rerun_from is None:
+            typer.echo(
+                "replay failed: --rerun-from is required for --mode hybrid.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        if not rerun_type_values and not rerun_step_id_values:
+            typer.echo(
+                "replay failed: hybrid mode requires --rerun-type and/or --rerun-step-id.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        unsupported_types = sorted(
+            {step_type for step_type in rerun_type_values if step_type not in STEP_TYPES}
+        )
+        if unsupported_types:
+            typer.echo(
+                "replay failed: unsupported --rerun-type values: "
+                f"{', '.join(unsupported_types)}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    try:
+        guardrail_mode: GuardrailMode = normalize_guardrail_mode(nondeterminism)
+    except ValueError as error:
+        typer.echo(f"replay failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+
+    rerun_run = None
+    policy = None
     try:
         source_run = read_artifact(artifact)
+        if replay_mode == "hybrid":
+            rerun_run = read_artifact(rerun_from)
+            policy = HybridReplayPolicy(
+                rerun_step_types=rerun_type_values,
+                rerun_step_ids=rerun_step_id_values,
+            )
+        guardrail_findings = (
+            detect_run_nondeterminism(source_run, run_label="source")
+            if guardrail_mode != "off"
+            else []
+        )
+        if guardrail_mode != "off" and rerun_run is not None:
+            guardrail_findings.extend(
+                detect_run_nondeterminism(rerun_run, run_label="rerun")
+            )
+        if guardrail_mode == "fail" and guardrail_findings:
+            message = (
+                "replay failed: nondeterminism indicators detected in replay inputs. "
+                "Use --nondeterminism warn to continue with warning output."
+            )
+            if json_output:
+                payload = {
+                    "mode": replay_mode,
+                    "status": "error",
+                    "message": message,
+                    "exit_code": 1,
+                    "nondeterminism": guardrail_payload(
+                        mode=guardrail_mode,
+                        findings=guardrail_findings,
+                    ),
+                }
+                typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+            else:
+                typer.echo(message, err=True)
+                typer.echo(
+                    render_guardrail_summary(
+                        mode=guardrail_mode,
+                        findings=guardrail_findings,
+                    ),
+                    err=True,
+                )
+            raise typer.Exit(code=1)
+
         config = ReplayConfig(seed=seed, fixed_clock=fixed_clock)
-        envelope = write_replay_stub_artifact(source_run, str(out), config=config)
+        if replay_mode == "hybrid":
+            envelope = write_replay_hybrid_artifact(
+                source_run,
+                rerun_run,
+                str(out),
+                config=config,
+                policy=policy,
+            )
+        else:
+            envelope = write_replay_stub_artifact(source_run, str(out), config=config)
     except (ArtifactError, ReplayError, FileNotFoundError) as error:
         typer.echo(f"replay failed: {error}", err=True)
         raise typer.Exit(code=1) from error
 
     summary = {
-        "mode": "stub",
+        "mode": replay_mode,
         "source_run_id": source_run.id,
         "replay_run_id": envelope["payload"]["run"]["id"],
         "steps": len(source_run.steps),
         "seed": seed,
         "fixed_clock": config.fixed_clock,
         "out": str(out),
+        "nondeterminism": guardrail_payload(
+            mode=guardrail_mode,
+            findings=guardrail_findings if guardrail_mode != "off" else [],
+        ),
     }
+    if replay_mode == "hybrid" and rerun_run is not None and policy is not None:
+        summary["rerun_from"] = str(rerun_from)
+        summary["rerun_from_run_id"] = rerun_run.id
+        summary["rerun_step_types"] = list(policy.rerun_step_types)
+        summary["rerun_step_ids"] = list(policy.rerun_step_ids)
+
     if json_output:
         typer.echo(json.dumps(summary, ensure_ascii=True, sort_keys=True))
     else:
-        typer.echo(f"replayed artifact: {out}")
+        typer.echo(f"replayed artifact ({replay_mode}): {out}")
+        guardrail_text = render_guardrail_summary(
+            mode=guardrail_mode,
+            findings=guardrail_findings if guardrail_mode != "off" else [],
+        )
+        if guardrail_text:
+            typer.echo(guardrail_text)
 
 
 @app.command()
@@ -343,8 +496,19 @@ def assert_run(
             "per-step metadata drift."
         ),
     ),
+    nondeterminism: str = typer.Option(
+        "off",
+        "--nondeterminism",
+        help="Determinism guardrail mode: off, warn, fail.",
+    ),
 ) -> None:
     """Assert candidate behavior matches baseline artifact."""
+    try:
+        guardrail_mode: GuardrailMode = normalize_guardrail_mode(nondeterminism)
+    except ValueError as error:
+        typer.echo(f"assert failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+
     if candidate is None:
         message = (
             "assert failed: missing candidate artifact. "
@@ -385,10 +549,30 @@ def assert_run(
         strict=strict,
         max_changes_per_step=max(1, max_changes),
     )
+    guardrail_findings = []
+    if guardrail_mode != "off":
+        guardrail_findings.extend(
+            detect_run_nondeterminism(baseline_run, run_label="baseline")
+        )
+        guardrail_findings.extend(
+            detect_run_nondeterminism(candidate_run, run_label="candidate")
+        )
+        guardrail_findings.extend(detect_diff_nondeterminism(result.diff, source="diff"))
+
+    guardrail_state = guardrail_payload(
+        mode=guardrail_mode,
+        findings=guardrail_findings if guardrail_mode != "off" else [],
+    )
+    guardrail_failed = guardrail_mode == "fail" and bool(guardrail_findings)
 
     payload = result.to_dict()
     payload["baseline_path"] = str(baseline)
     payload["candidate_path"] = str(candidate)
+    payload["nondeterminism"] = guardrail_state
+    if guardrail_failed and result.passed:
+        payload["status"] = "fail"
+        payload["exit_code"] = 1
+        payload["guardrail_failure"] = True
 
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
@@ -402,14 +586,27 @@ def assert_run(
             else:
                 message = "assert failed: divergence detected"
             typer.echo(f"{message} (baseline={baseline} candidate={candidate})")
+        if guardrail_failed and result.passed:
+            typer.echo(
+                "assert failed: nondeterminism indicators detected in fail mode "
+                f"(baseline={baseline} candidate={candidate})"
+            )
         typer.echo(render_diff_summary(result.diff))
         typer.echo(render_first_divergence(result.diff, max_changes=max_changes))
         strict_summary = _render_strict_failures(result, max_changes=max_changes)
         if strict_summary:
             typer.echo(strict_summary)
+        guardrail_text = render_guardrail_summary(
+            mode=guardrail_mode,
+            findings=guardrail_findings if guardrail_mode != "off" else [],
+        )
+        if guardrail_text:
+            typer.echo(guardrail_text)
 
     if not result.passed:
         raise typer.Exit(code=result.exit_code)
+    if guardrail_failed:
+        raise typer.Exit(code=1)
 
 
 @app.command()

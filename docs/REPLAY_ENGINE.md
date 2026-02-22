@@ -1,8 +1,9 @@
-# ReplayKit Replay Engine (M3)
+# ReplayKit Replay Engine
 
 ## Scope
 
-M3 adds deterministic offline stub replay for recorded `.rpk` artifacts.
+- Deterministic offline stub replay for recorded `.rpk` artifacts.
+- Hybrid replay for selective rerun boundaries while stubbing the rest.
 
 ## Stub Replay Semantics
 
@@ -14,8 +15,11 @@ M3 adds deterministic offline stub replay for recorded `.rpk` artifacts.
 ## Public API
 
 - `ReplayConfig(seed, fixed_clock)`
+- `HybridReplayPolicy(rerun_step_types, rerun_step_ids, strict_alignment)`
 - `replay_stub_run(source_run, config=...)`
+- `replay_hybrid_run(source_run, rerun_run, config=..., policy=...)`
 - `write_replay_stub_artifact(source_run, out_path, config=...)`
+- `write_replay_hybrid_artifact(source_run, rerun_run, out_path, config=..., policy=...)`
 
 ## Determinism Controls
 
@@ -32,6 +36,8 @@ If replay internals or adapters attempt a network call, replay fails immediately
 
 ## CLI Usage
 
+Stub replay:
+
 ```bash
 replaykit replay examples/runs/m2_capture_boundaries.rpk \
   --out runs/replay-output.rpk \
@@ -45,8 +51,28 @@ Machine-readable output:
 replaykit replay examples/runs/m2_capture_boundaries.rpk --json
 ```
 
+Hybrid replay using rerun source artifact and step-type selectors:
+
+```bash
+replaykit replay examples/runs/m2_capture_boundaries.rpk \
+  --mode hybrid \
+  --rerun-from runs/manual/rerun-candidate.rpk \
+  --rerun-type model.response \
+  --out runs/manual/hybrid-output.rpk \
+  --seed 42 \
+  --fixed-clock 2026-02-21T18:00:00Z
+```
+
+Guardrail modes:
+
+```bash
+replaykit replay examples/runs/m2_capture_boundaries.rpk --nondeterminism warn
+replaykit replay examples/runs/m2_capture_boundaries.rpk --nondeterminism fail --json
+```
+
 ## Assumptions and Limits
 
-- M3 is stub replay only; hybrid selective rerun is out of scope.
+- Hybrid mode uses a second artifact as rerun source and currently aligns by step index.
+- Hybrid mode requires explicit selectors (`--rerun-type` and/or `--rerun-step-id`).
 - Replay currently operates on existing artifacts rather than instrumenting live application execution.
 - Adapter-level runtime interception for SDKs/frameworks is planned in later milestones.
