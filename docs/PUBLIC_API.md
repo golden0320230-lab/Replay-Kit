@@ -59,8 +59,13 @@ replaykit.snapshot_assert(name, candidate, *, snapshots_dir="snapshots", update=
 
 ## Notes
 
-- Current `record(...)` implementation records ReplayKit's deterministic demo flow.
+- `replaykit.record(...)` currently records ReplayKit's deterministic demo flow when
+  used as a direct function call.
+- CLI record target mode (`replaykit record -- <command>`) executes arbitrary script
+  or module targets and captures boundary events around that execution.
 - `record(..., intercept=(...))` returns a context manager for library-first capture.
+- Current automatic wrapper interception scope is `requests` and `httpx`; provider SDKs
+  outside installed adapters are not intercepted by default.
 - `assert_run(..., strict=True)` enables stricter drift gates and fails on:
   - run `environment_fingerprint` mismatch
   - run `runtime_versions` mismatch

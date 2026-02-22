@@ -20,13 +20,31 @@ ReplayKit is designed to answer one question quickly:
 - Security-first redaction defaults
 - Versioned plugin hooks for capture/replay/diff lifecycle
 
+## Current Capabilities
+
+As of **February 22, 2026**, ReplayKit currently provides:
+
+- Deterministic run capture to `.rpk` artifacts, including a built-in demo flow and wrapper capture for external script/module execution.
+- Boundary-level capture for `model.*`, `tool.*`, and HTTP (`requests` + `httpx`) workflows with stable canonicalization and hashing.
+- Fully offline replay in `stub` mode, plus `hybrid` replay with selective rerun controls (`--rerun-type` and `--rerun-step-id`).
+- O(n) structured diff with first-divergence detection for fast root-cause isolation.
+- Regression-style `assert` checks with JSON output, optional strict drift checks, and optional slowdown gate thresholds.
+- Redacted bundle export, artifact migration, and HMAC signing/verification for integrity and incident sharing.
+- Snapshot update/assert workflow (`snapshot`) and benchmark workflow (`benchmark`) for repeatable local/CI validation.
+- Local UI (`ui`) with left/right artifact prefill and browser launch support for Git-style run comparisons.
+- Live demo capture mode (`live-demo`) with deterministic fake provider behavior, including optional streaming shape capture.
+- Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
+- Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.
+- Stable Python API entrypoint (`import replaykit`) and tool decorator capture (`@replaykit.tool`) for library integrations.
+- Cross-platform CI coverage (macOS, Linux, Windows) with a golden-path record/replay/diff/assert gate in GitHub Actions.
+
 ## Quickstart (Runnable Now)
 
 ```bash
 python3 -m pip install -e ".[dev]"
 python3 examples/apps/minimal_app.py
 replaykit record --out runs/quickstart-demo.rpk
-replaykit record --out runs/quickstart-wrapper.rpk -- python examples/apps/minimal_app.py
+replaykit record --out runs/app.rpk -- python examples/apps/minimal_app.py
 replaykit record --out runs/quickstart-module.rpk -- python -m replaypack.capture.demo
 replaykit replay runs/quickstart-demo.rpk --out runs/quickstart-replay.rpk
 replaykit diff runs/quickstart-demo.rpk runs/quickstart-replay.rpk --first-divergence
@@ -55,6 +73,7 @@ replaykit --version
 ## CLI Surface
 
 ```bash
+replaykit --version
 replaykit record -- python app.py
 replaykit record --out runs/app.rpk -- python examples/apps/minimal_app.py
 replaykit record --out runs/mod.rpk -- python -m replaypack.capture.demo
@@ -64,6 +83,7 @@ replaykit diff runs/a.rpk runs/b.rpk --first-divergence
 replaykit bundle runs/a.rpk --redact default --out incident.bundle
 replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
+replaykit live-demo --out runs/live-demo.rpk --provider fake --stream
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk
@@ -104,7 +124,12 @@ pyproject.toml        Package metadata and CLI entrypoint
 - `M5` complete: redacted bundle export profiles with replay-safe bundle round-trip.
 - `M6` complete: CI-oriented assertion command and workflow integration.
 - `M7` complete: local Git-diff style UI with first-divergence navigation.
-- Post-`M7` updates: non-demo CLI wrapper recording, bootstrap runner module, stable library record context manager, plugin/release docs.
+- Post-`M7` update: CLI wrapper record-target support with local-only script/module examples.
+- Post-`M7` update: interceptor leak-proofing coverage (HTTP patches uninstall cleanly after capture).
+- Post-`M7` update: live fake-provider capture mode (`replaykit live-demo`) with stream/non-stream parity.
+- Post-`M7` update: provider adapter contract and reference adapter (`docs/providers.md`).
+- Post-`M7` update: release polish (`replaykit --version`, install/signing docs).
+- Post-`M7` update: CI golden-path gating in GitHub Actions (record/replay/diff/assert).
 
 Generate a deterministic capture artifact:
 
@@ -115,7 +140,7 @@ replaykit record --out runs/demo-recording.rpk
 Record an arbitrary Python app (no app code changes):
 
 ```bash
-replaykit record --out runs/app-recording.rpk -- python examples/apps/minimal_app.py
+replaykit record --out runs/app.rpk -- python examples/apps/minimal_app.py
 replaykit record --out runs/mod.rpk -- python -m replaypack.capture.demo
 ```
 
