@@ -22,9 +22,11 @@ This is the stable, semver-governed API surface.
 replaykit.__all__ == [
     "__version__",
     "ReplayMode",
+    "CaptureInterceptor",
     "AssertionResult",
     "RunDiffResult",
     "SnapshotWorkflowResult",
+    "tool",
     "record",
     "replay",
     "diff",
@@ -38,6 +40,8 @@ replaykit.__all__ == [
 
 ```python
 replaykit.record(path, *, mode="stub", redaction=True)
+with replaykit.record(path, intercept=("requests", "httpx")):
+    ...
 replaykit.replay(path, *, out, mode="stub", seed=0, fixed_clock="2026-01-01T00:00:00Z", rerun_from=None, rerun_step_types=(), rerun_step_ids=())
 replaykit.diff(left, right, *, first_only=False, max_changes_per_step=32, redaction_policy=None)
 replaykit.assert_run(baseline, candidate, *, strict=False, max_changes_per_step=32)
@@ -56,6 +60,7 @@ replaykit.snapshot_assert(name, candidate, *, snapshots_dir="snapshots", update=
 ## Notes
 
 - Current `record(...)` implementation records ReplayKit's deterministic demo flow.
+- `record(..., intercept=(...))` returns a context manager for library-first capture.
 - `assert_run(..., strict=True)` enables stricter drift gates and fails on:
   - run `environment_fingerprint` mismatch
   - run `runtime_versions` mismatch
