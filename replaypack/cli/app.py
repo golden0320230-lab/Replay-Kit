@@ -7,11 +7,40 @@ import typer
 
 from replaypack.artifact import ArtifactError, read_artifact, write_artifact, write_bundle_artifact
 from replaypack.capture import build_demo_run
-from replaypack.diff import assert_runs, diff_runs, render_diff_summary, render_first_divergence
+from replaypack.diff import (
+    AssertionResult,
+    assert_runs,
+    diff_runs,
+    render_diff_summary,
+    render_first_divergence,
+)
 from replaypack.replay import ReplayConfig, ReplayError, write_replay_stub_artifact
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
+
+
+def _render_strict_failures(result: AssertionResult, *, max_changes: int) -> str:
+    if not result.strict_failures:
+        return ""
+
+    limit = max(1, max_changes)
+    lines = [f"strict drift checks failed: {len(result.strict_failures)}"]
+
+    for failure in result.strict_failures[:limit]:
+        lines.append(f"- [{failure.kind}] {failure.path}")
+        lines.append(
+            f"  left={json.dumps(failure.left, ensure_ascii=True, sort_keys=True)}"
+        )
+        lines.append(
+            f"  right={json.dumps(failure.right, ensure_ascii=True, sort_keys=True)}"
+        )
+
+    remaining = len(result.strict_failures) - limit
+    if remaining > 0:
+        lines.append(f"... {remaining} additional strict mismatch(es) not shown")
+
+    return "\n".join(lines)
 
 
 @app.command()
@@ -188,6 +217,14 @@ def assert_run(
         "--max-changes",
         help="Maximum number of field-level changes to print in text mode.",
     ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help=(
+            "Enable strict drift checks: environment/runtime mismatch and "
+            "per-step metadata drift."
+        ),
+    ),
 ) -> None:
     """Assert candidate behavior matches baseline artifact."""
     if candidate is None:
@@ -227,6 +264,7 @@ def assert_run(
     result = assert_runs(
         baseline_run,
         candidate_run,
+        strict=strict,
         max_changes_per_step=max(1, max_changes),
     )
 
@@ -238,17 +276,19 @@ def assert_run(
         typer.echo(json.dumps(payload, ensure_ascii=True, sort_keys=True))
     else:
         if result.passed:
-            typer.echo(
-                "assert passed: "
-                f"baseline={baseline} candidate={candidate}"
-            )
+            mode = "assert passed (strict)" if strict else "assert passed"
+            typer.echo(f"{mode}: baseline={baseline} candidate={candidate}")
         else:
-            typer.echo(
-                "assert failed: divergence detected "
-                f"(baseline={baseline} candidate={candidate})"
-            )
+            if strict and result.strict_failures and result.diff.identical:
+                message = "assert failed: strict drift detected"
+            else:
+                message = "assert failed: divergence detected"
+            typer.echo(f"{message} (baseline={baseline} candidate={candidate})")
         typer.echo(render_diff_summary(result.diff))
         typer.echo(render_first_divergence(result.diff, max_changes=max_changes))
+        strict_summary = _render_strict_failures(result, max_changes=max_changes)
+        if strict_summary:
+            typer.echo(strict_summary)
 
     if not result.passed:
         raise typer.Exit(code=result.exit_code)

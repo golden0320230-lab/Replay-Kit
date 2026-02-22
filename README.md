@@ -86,6 +86,12 @@ Assert candidate behavior against a baseline artifact (CI-friendly exit codes):
 replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --json
 ```
 
+Enable strict drift checks (environment/runtime metadata + step metadata):
+
+```bash
+replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --strict --json
+```
+
 Launch the local UI:
 
 ```bash

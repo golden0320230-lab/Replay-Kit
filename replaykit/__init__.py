@@ -121,23 +121,19 @@ def assert_run(
     Args:
         baseline: Baseline artifact path.
         candidate: Candidate artifact path.
-        strict: Reserved for strict-mode semantics (not yet implemented).
+        strict: Enable strict drift checks for environment/runtime metadata and
+            per-step metadata drift.
         max_changes_per_step: Maximum field-level changes collected per step.
 
     Returns:
         Assertion result object with pass/fail and diff payload.
-
-    Raises:
-        NotImplementedError: If strict mode is requested.
     """
-    if strict:
-        raise NotImplementedError("strict mode is not implemented yet")
-
     baseline_run = read_artifact(baseline)
     candidate_run = read_artifact(candidate)
     return assert_runs(
         baseline_run,
         candidate_run,
+        strict=strict,
         max_changes_per_step=max_changes_per_step,
     )
 

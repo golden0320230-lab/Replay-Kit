@@ -30,5 +30,8 @@ replaykit.bundle(path, *, out, redaction_profile="default")
 ## Notes
 
 - Current `record(...)` implementation records ReplayKit's deterministic demo flow.
-- `assert_run(..., strict=True)` is reserved and currently raises `NotImplementedError`.
+- `assert_run(..., strict=True)` enables stricter drift gates and fails on:
+  - run `environment_fingerprint` mismatch
+  - run `runtime_versions` mismatch
+  - per-step `metadata` drift (including volatile metadata fields)
 - Internal modules under `replaypack.*` are implementation details and may change.

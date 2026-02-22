@@ -19,6 +19,12 @@ Machine-readable output:
 replaykit assert baseline.rpk --candidate candidate.rpk --json
 ```
 
+Strict-mode drift gating:
+
+```bash
+replaykit assert baseline.rpk --candidate candidate.rpk --strict --json
+```
+
 ## Local Reproduction (matches CI)
 
 ```bash
