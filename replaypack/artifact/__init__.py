@@ -18,11 +18,25 @@ from replaypack.artifact.io import (
     read_artifact,
     write_artifact,
 )
-from replaypack.artifact.schema import ARTIFACT_SCHEMA, DEFAULT_ARTIFACT_VERSION, validate_artifact
+from replaypack.artifact.schema import (
+    ARTIFACT_SCHEMA,
+    DEFAULT_ARTIFACT_VERSION,
+    SCHEMA_DIR,
+    is_version_compatible,
+    load_artifact_schema,
+    parse_artifact_version,
+    schema_path_for_version,
+    validate_artifact,
+)
 
 __all__ = [
     "ARTIFACT_SCHEMA",
     "DEFAULT_ARTIFACT_VERSION",
+    "SCHEMA_DIR",
+    "parse_artifact_version",
+    "is_version_compatible",
+    "schema_path_for_version",
+    "load_artifact_schema",
     "ArtifactError",
     "ArtifactValidationError",
     "ArtifactChecksumError",

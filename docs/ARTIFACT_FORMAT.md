@@ -7,6 +7,18 @@
 - Clear schema validation failures
 - Versioned evolution without silent breakage
 
+## Published Schemas
+
+ReplayKit publishes versioned JSON schema files under a stable in-repo path:
+
+- `schemas/rpk-1.0.schema.json` (current)
+
+Schema naming convention:
+
+- `schemas/rpk-<major>.<minor>.schema.json`
+
+See `schemas/README.md` for the compatibility contract.
+
 ## Envelope
 
 Each `.rpk` artifact is a JSON object with this envelope:
@@ -30,6 +42,12 @@ Each `.rpk` artifact is a JSON object with this envelope:
   "checksum": "sha256:<hex>"
 }
 ```
+
+Real artifact examples:
+
+- `examples/runs/minimal_v1.rpk` (minimal valid artifact)
+- `examples/runs/m2_capture_boundaries.rpk` (capture boundaries)
+- `examples/runs/m5_bundle_default.bundle` (bundle/export variant)
 
 ## Run Object
 
@@ -103,3 +121,15 @@ The `checksum` field is excluded from checksum input.
   - different major: fail fast with explicit error
 
 This allows additive minor evolution inside major `1` while preventing silent interpretation errors across major schema breaks.
+
+Minor version expectations:
+
+- `1.0` is the baseline published schema.
+- `1.y` (same major) must remain backward-compatible for existing readers.
+- Future `1.y` schema files can document additive fields while preserving required core fields.
+
+Migration expectations:
+
+- Any breaking format change requires a major version bump (`2.0`, etc.).
+- A new schema file must be published under `schemas/`.
+- Migration tooling and guidance will accompany major bumps (tracked as roadmap Issue #16).

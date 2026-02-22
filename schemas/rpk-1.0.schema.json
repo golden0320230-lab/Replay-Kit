@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "checksum": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "properties": {
+        "run": {
+          "additionalProperties": true,
+          "properties": {
+            "environment_fingerprint": {
+              "type": "object"
+            },
+            "id": {
+              "type": "string"
+            },
+            "runtime_versions": {
+              "type": "object"
+            },
+            "steps": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "hash": {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "input": {},
+                  "metadata": {
+                    "type": "object"
+                  },
+                  "output": {},
+                  "type": {
+                    "enum": [
+                      "prompt.render",
+                      "model.request",
+                      "model.response",
+                      "tool.request",
+                      "tool.response",
+                      "error.event",
+                      "output.final"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "type",
+                  "input",
+                  "output",
+                  "metadata",
+                  "hash"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "timestamp": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "timestamp",
+            "environment_fingerprint",
+            "runtime_versions",
+            "steps"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "run"
+      ],
+      "type": "object"
+    },
+    "version": {
+      "description": "Major.minor artifact schema version",
+      "pattern": "^\\d+\\.\\d+$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "metadata",
+    "payload",
+    "checksum"
+  ],
+  "title": "ReplayKit Artifact",
+  "type": "object"
+}
