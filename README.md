@@ -30,6 +30,7 @@ replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
+replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk
 replaykit ui
 ```
 
@@ -127,10 +128,23 @@ replaykit snapshot my-flow --candidate runs/candidate.rpk --snapshots-dir snapsh
 replaykit snapshot my-flow --candidate runs/candidate.rpk --snapshots-dir snapshots --json
 ```
 
+Run performance benchmark suite and optional slowdown gate:
+
+```bash
+replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk --iterations 3 --out runs/benchmark.json --json
+replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk --iterations 3 --out runs/benchmark-current.json --baseline runs/benchmark-baseline.json --fail-on-slowdown 30 --json
+```
+
 Enable strict drift checks (environment/runtime metadata + step metadata):
 
 ```bash
 replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --strict --json
+```
+
+Enable slowdown gate in assertion (requires duration metadata in artifacts):
+
+```bash
+replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --fail-on-slowdown 25 --json
 ```
 
 Enable determinism guardrails in assert/replay paths:

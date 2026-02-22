@@ -43,6 +43,19 @@ replaykit assert baseline.rpk --candidate candidate.rpk --nondeterminism warn --
 replaykit assert baseline.rpk --candidate candidate.rpk --nondeterminism fail --json
 ```
 
+Slowdown gate:
+
+```bash
+replaykit assert baseline.rpk --candidate candidate.rpk --fail-on-slowdown 25 --json
+```
+
+Benchmark suite:
+
+```bash
+replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk --iterations 3 --out runs/benchmark.json --json
+replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk --iterations 3 --out runs/benchmark-current.json --baseline runs/benchmark-baseline.json --fail-on-slowdown 30 --json
+```
+
 ## Local Reproduction (matches CI)
 
 ```bash
@@ -50,6 +63,7 @@ python3 -m pip install -e ".[dev]"
 python3 -m pytest -q
 python3 -c "from pathlib import Path; Path('runs').mkdir(parents=True, exist_ok=True)"
 python3 -m replaypack assert examples/runs/m2_capture_boundaries.rpk --candidate examples/runs/m2_capture_boundaries.rpk --json > runs/ci-assert.json
+python3 -m replaypack benchmark --source examples/runs/m2_capture_boundaries.rpk --iterations 3 --out runs/ci-benchmark.json --json > runs/ci-benchmark-result.json
 python3 -m replaypack.ci_parity --source examples/runs/m2_capture_boundaries.rpk --out-dir runs/parity --expected ci/expected_hash_parity.json --json > runs/parity/ci-hash-parity.json
 ```
 
@@ -62,6 +76,8 @@ python3 -m replaypack.ci_parity --source examples/runs/m2_capture_boundaries.rpk
 ## CI Artifact Paths
 
 - `runs/ci-assert.json` assertion output
+- `runs/ci-benchmark.json` benchmark summary artifact
+- `runs/ci-benchmark-result.json` benchmark command payload
 - `runs/parity/parity-replay.rpk` deterministic replay artifact used for parity check
 - `runs/parity/hash-parity-summary.json` computed parity summary
 - `runs/parity/ci-hash-parity.json` parity check result payload

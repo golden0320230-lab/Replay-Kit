@@ -40,6 +40,34 @@ def _guardrail_run(run_id: str, request_id: str, *, uses_random: bool = True) ->
     )
 
 
+def _timed_run(run_id: str, duration_ms: float) -> Run:
+    return Run(
+        id=run_id,
+        timestamp="2026-02-22T18:30:00Z",
+        environment_fingerprint={"os": "macOS"},
+        runtime_versions={
+            "python": "3.12.0",
+            "replaykit": "0.1.0",
+        },
+        steps=[
+            Step(
+                id="step-001",
+                type="model.request",
+                input={"prompt": "hello"},
+                output={"status": "sent"},
+                metadata={"duration_ms": duration_ms},
+            ),
+            Step(
+                id="step-002",
+                type="model.response",
+                input={"request_id": "req-001"},
+                output={"content": "hi"},
+                metadata={"duration_ms": duration_ms},
+            ),
+        ],
+    )
+
+
 def test_cli_assert_passes_with_identical_artifacts() -> None:
     runner = CliRunner()
     result = runner.invoke(
@@ -323,3 +351,85 @@ def test_cli_assert_rejects_invalid_guardrail_mode() -> None:
     assert result.exit_code == 2
     combined = result.stdout + result.stderr
     assert "Invalid nondeterminism mode" in combined
+
+
+def test_cli_assert_slowdown_gate_passes_within_threshold(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.rpk"
+    candidate_path = tmp_path / "candidate.rpk"
+    write_artifact(_timed_run("run-base", 100), baseline_path)
+    write_artifact(_timed_run("run-cand", 110), candidate_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "assert",
+            str(baseline_path),
+            "--candidate",
+            str(candidate_path),
+            "--fail-on-slowdown",
+            "15",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "pass"
+    assert payload["performance"]["status"] == "within_threshold"
+    assert payload["performance"]["gate_failed"] is False
+
+
+def test_cli_assert_slowdown_gate_fails_when_exceeded(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.rpk"
+    candidate_path = tmp_path / "candidate.rpk"
+    write_artifact(_timed_run("run-base", 100), baseline_path)
+    write_artifact(_timed_run("run-cand", 140), candidate_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "assert",
+            str(baseline_path),
+            "--candidate",
+            str(candidate_path),
+            "--fail-on-slowdown",
+            "10",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "fail"
+    assert payload["slowdown_gate_failure"] is True
+    assert payload["performance"]["status"] == "threshold_exceeded"
+    assert payload["performance"]["gate_failed"] is True
+
+
+def test_cli_assert_slowdown_gate_reports_missing_metrics(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.rpk"
+    candidate_path = tmp_path / "candidate.rpk"
+    write_artifact(_guardrail_run("run-base", "req-001", uses_random=False), baseline_path)
+    write_artifact(_guardrail_run("run-cand", "req-001", uses_random=False), candidate_path)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "assert",
+            str(baseline_path),
+            "--candidate",
+            str(candidate_path),
+            "--fail-on-slowdown",
+            "10",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "fail"
+    assert payload["performance"]["status"] == "missing_metrics"
+    assert payload["slowdown_gate_failure"] is True

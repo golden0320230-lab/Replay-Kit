@@ -40,6 +40,11 @@ from replaypack.replay import (
     write_replay_hybrid_artifact,
     write_replay_stub_artifact,
 )
+from replaypack.performance import (
+    evaluate_benchmark_slowdown_gate,
+    evaluate_slowdown_gate,
+    run_benchmark_suite,
+)
 from replaypack.snapshot import (
     SnapshotConfigError,
     assert_snapshot_artifact,
@@ -411,6 +416,114 @@ def diff(
 
 
 @app.command()
+def benchmark(
+    source: Path = typer.Option(
+        Path("examples/runs/m2_capture_boundaries.rpk"),
+        "--source",
+        help="Source artifact path for replay/diff benchmark workloads.",
+    ),
+    out: Path = typer.Option(
+        Path("runs/benchmark.json"),
+        "--out",
+        help="Output path for benchmark summary JSON.",
+    ),
+    iterations: int = typer.Option(
+        5,
+        "--iterations",
+        min=1,
+        help="Benchmark iterations per workload.",
+    ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Optional baseline benchmark JSON for slowdown comparison.",
+    ),
+    fail_on_slowdown: float | None = typer.Option(
+        None,
+        "--fail-on-slowdown",
+        min=0.0,
+        help=(
+            "Fail if any workload mean runtime exceeds baseline by this percentage. "
+            "Requires --baseline."
+        ),
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable benchmark output.",
+    ),
+) -> None:
+    """Run representative record/replay/diff benchmarks and optional slowdown gate."""
+    try:
+        suite = run_benchmark_suite(
+            source_artifact=source,
+            iterations=iterations,
+        )
+    except (ArtifactError, FileNotFoundError, ValueError) as error:
+        message = f"benchmark failed: {error}"
+        if json_output:
+            _echo_json({"status": "error", "exit_code": 1, "message": message})
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(suite.to_dict(), ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    baseline_payload: dict[str, Any] | None = None
+    if baseline is not None:
+        try:
+            baseline_payload = json.loads(baseline.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError) as error:
+            message = f"benchmark failed: unable to read baseline benchmark ({error})"
+            if json_output:
+                _echo_json({"status": "error", "exit_code": 1, "message": message})
+            else:
+                _echo(message, err=True)
+            raise typer.Exit(code=1) from error
+
+    gate = evaluate_benchmark_slowdown_gate(
+        suite,
+        baseline_payload,
+        threshold_percent=fail_on_slowdown,
+    )
+
+    payload = {
+        "status": "fail" if gate.gate_failed else "pass",
+        "exit_code": 1 if gate.gate_failed else 0,
+        "out": str(out),
+        "source": str(source),
+        "benchmark": suite.to_dict(),
+        "baseline_path": str(baseline) if baseline is not None else None,
+        "slowdown_gate": gate.to_dict(),
+    }
+
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(f"benchmark artifact: {out}")
+        _echo(
+            "benchmark means (ms): "
+            + ", ".join(
+                f"{name}={stats.mean_ms:.3f}"
+                for name, stats in sorted(suite.workloads.items())
+            )
+        )
+        if fail_on_slowdown is not None:
+            _echo(
+                "benchmark slowdown gate: "
+                f"status={gate.status} threshold={fail_on_slowdown:.3f}% "
+                f"failing={','.join(gate.failing_workloads) or 'none'}"
+            )
+
+    if gate.gate_failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def bundle(
     artifact: Path = typer.Argument(..., help="Path to source .rpk artifact."),
     out: Path = typer.Option(
@@ -555,6 +668,15 @@ def assert_run(
             "per-step metadata drift."
         ),
     ),
+    fail_on_slowdown: float | None = typer.Option(
+        None,
+        "--fail-on-slowdown",
+        min=0.0,
+        help=(
+            "Fail when candidate total duration exceeds baseline by this percentage "
+            "(uses duration_ms/latency_ms/wall_time_ms metadata)."
+        ),
+    ),
     nondeterminism: str = typer.Option(
         "off",
         "--nondeterminism",
@@ -611,15 +733,26 @@ def assert_run(
         findings=guardrail_findings if guardrail_mode != "off" else [],
     )
     guardrail_failed = guardrail_mode == "fail" and bool(guardrail_findings)
+    slowdown_gate = evaluate_slowdown_gate(
+        baseline_run,
+        candidate_run,
+        threshold_percent=fail_on_slowdown,
+    )
+    slowdown_failed = slowdown_gate.gate_failed
 
     payload = result.to_dict()
     payload["baseline_path"] = str(baseline)
     payload["candidate_path"] = str(candidate)
     payload["nondeterminism"] = guardrail_state
+    payload["performance"] = slowdown_gate.to_dict()
     if guardrail_failed and result.passed:
         payload["status"] = "fail"
         payload["exit_code"] = 1
         payload["guardrail_failure"] = True
+    if slowdown_failed and result.passed:
+        payload["status"] = "fail"
+        payload["exit_code"] = 1
+        payload["slowdown_gate_failure"] = True
 
     if json_output:
         _echo_json(payload)
@@ -642,6 +775,26 @@ def assert_run(
                 f"(baseline={baseline} candidate={candidate})",
                 force=True,
             )
+        if fail_on_slowdown is not None:
+            slowdown_value = (
+                f"{slowdown_gate.slowdown_percent:.3f}%"
+                if slowdown_gate.slowdown_percent is not None
+                else "n/a"
+            )
+            _echo(
+                "performance gate: "
+                f"baseline={slowdown_gate.baseline.total_duration_ms:.3f}ms "
+                f"candidate={slowdown_gate.candidate.total_duration_ms:.3f}ms "
+                f"slowdown={slowdown_value} "
+                f"threshold={fail_on_slowdown:.3f}% "
+                f"status={slowdown_gate.status}"
+            )
+        if slowdown_failed and result.passed:
+            _echo(
+                "assert failed: slowdown gate triggered "
+                f"(baseline={baseline} candidate={candidate})",
+                force=True,
+            )
         _echo(render_diff_summary(result.diff))
         _echo(render_first_divergence(result.diff, max_changes=max_changes))
         strict_summary = _render_strict_failures(result, max_changes=max_changes)
@@ -656,7 +809,7 @@ def assert_run(
 
     if not result.passed:
         raise typer.Exit(code=result.exit_code)
-    if guardrail_failed:
+    if guardrail_failed or slowdown_failed:
         raise typer.Exit(code=1)
 
 
