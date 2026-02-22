@@ -61,6 +61,7 @@ def test_run_parity_check_passes_with_matching_expected(tmp_path: Path) -> None:
     expected_path = tmp_path / "expected.json"
     expected = first_summary.to_dict()
     expected.pop("replay_artifact")
+    expected.pop("source_artifact")
     expected_path.write_text(
         json.dumps(expected, ensure_ascii=True, sort_keys=True),
         encoding="utf-8",
