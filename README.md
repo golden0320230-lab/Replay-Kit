@@ -20,6 +20,16 @@ ReplayKit is designed to answer one question quickly:
 - Security-first redaction defaults
 - Versioned plugin hooks for capture/replay/diff lifecycle
 
+## Quickstart (Runnable Now)
+
+```bash
+python3 -m pip install -e ".[dev]"
+python3 examples/apps/minimal_app.py
+replaykit record --out runs/quickstart-demo.rpk
+replaykit replay runs/quickstart-demo.rpk --out runs/quickstart-replay.rpk
+replaykit diff runs/quickstart-demo.rpk runs/quickstart-replay.rpk --first-divergence
+```
+
 ## Planned CLI Surface
 
 ```bash
