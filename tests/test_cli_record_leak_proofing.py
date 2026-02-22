@@ -65,9 +65,15 @@ def test_record_mode_uninstalls_interceptors_and_leaves_no_capture_context(
     assert get_current_context() is None
 
     with _local_http_server() as base_url:
+        port = base_url.rsplit(":", 1)[1]
         response_requests = requests.get(f"{base_url}/post-capture", timeout=5)
         response_httpx = httpx.get(f"{base_url}/post-capture", timeout=5)
+        response_httpx_localhost = httpx.get(
+            f"http://localhost:{port}/post-capture-localhost",
+            timeout=5,
+        )
 
     assert response_requests.status_code == 200
     assert response_httpx.status_code == 200
+    assert response_httpx_localhost.status_code == 200
     assert get_current_context() is None
