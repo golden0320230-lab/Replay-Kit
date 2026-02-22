@@ -2,15 +2,18 @@ import inspect
 from pathlib import Path
 
 import replaykit
+from replaypack.artifact import read_artifact
 
 
 def test_public_api_symbol_list_is_explicit_and_stable() -> None:
     assert replaykit.__all__ == [
         "__version__",
         "ReplayMode",
+        "CaptureInterceptor",
         "AssertionResult",
         "RunDiffResult",
         "SnapshotWorkflowResult",
+        "tool",
         "record",
         "replay",
         "diff",
@@ -22,7 +25,15 @@ def test_public_api_symbol_list_is_explicit_and_stable() -> None:
 
 def test_public_api_function_signatures_and_annotations() -> None:
     expected_parameter_order = {
-        "record": ("path", "mode", "redaction", "redaction_policy"),
+        "record": (
+            "path",
+            "mode",
+            "redaction",
+            "redaction_policy",
+            "intercept",
+            "run_id",
+            "timestamp",
+        ),
         "replay": (
             "path",
             "out",
@@ -118,6 +129,27 @@ def test_core_workflow_works_via_public_api_only(tmp_path: Path) -> None:
     assert assert_result.status == "pass"
     assert assert_result.assertion is not None
     assert assert_result.assertion.passed is True
+
+
+def test_record_context_manager_mode_runs_without_cli(tmp_path: Path) -> None:
+    out_path = tmp_path / "context-record.rpk"
+
+    @replaykit.tool(name="contract.echo")
+    def echo(value: str) -> dict[str, str]:
+        return {"echo": value}
+
+    with replaykit.record(
+        out_path,
+        intercept=("requests", "httpx"),
+        run_id="run-contract-context",
+        timestamp="2026-02-22T20:00:00Z",
+    ):
+        echo("hello")
+
+    assert out_path.exists()
+    run = read_artifact(out_path)
+    assert run.id == "run-contract-context"
+    assert [step.type for step in run.steps] == ["tool.request", "tool.response"]
 
 
 def test_public_api_policy_doc_includes_semver_rules() -> None:

@@ -5,7 +5,11 @@ This module is the supported import path for library users.
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from dataclasses import dataclass, field
 from pathlib import Path
+import sys
+import time
 from typing import Any, Literal
 
 from replaypack.artifact import (
@@ -15,6 +19,14 @@ from replaypack.artifact import (
     write_bundle_artifact,
 )
 from replaypack.capture import RedactionPolicy, build_demo_run
+from replaypack.capture import (
+    CaptureContext,
+    InterceptionPolicy,
+    capture_run,
+    intercept_httpx,
+    intercept_requests,
+    tool,
+)
 from replaypack.diff import assert_runs, diff_runs
 from replaypack.diff.assertion import AssertionResult
 from replaypack.diff.models import RunDiffResult
@@ -33,6 +45,88 @@ from replaypack.snapshot import (
 __version__ = "0.1.0"
 
 ReplayMode = Literal["stub", "hybrid"]
+CaptureInterceptor = Literal["httpx", "requests"]
+RecordResult = dict[str, Any]
+
+
+@dataclass(slots=True)
+class _RecordCaptureScope:
+    """Context manager that captures a user-owned code block and writes artifact on exit."""
+
+    path: str | Path
+    intercept: tuple[CaptureInterceptor, ...]
+    redaction_policy: RedactionPolicy | None
+    run_id: str | None
+    timestamp: str | None
+    _capture_scope: Any = field(default=None, init=False, repr=False)
+    _capture_context: CaptureContext | None = field(default=None, init=False, repr=False)
+    _intercept_stack: ExitStack | None = field(default=None, init=False, repr=False)
+
+    def __enter__(self) -> CaptureContext:
+        resolved_run_id = self.run_id or f"run-record-context-{int(time.time() * 1000)}"
+        self._capture_scope = capture_run(
+            run_id=resolved_run_id,
+            timestamp=self.timestamp,
+            policy=InterceptionPolicy(capture_http_bodies=True),
+            redaction_policy=self.redaction_policy,
+        )
+        self._capture_context = self._capture_scope.__enter__()
+        self._intercept_stack = ExitStack()
+        try:
+            if "requests" in self.intercept:
+                self._intercept_stack.enter_context(
+                    intercept_requests(context=self._capture_context)
+                )
+            if "httpx" in self.intercept:
+                self._intercept_stack.enter_context(intercept_httpx(context=self._capture_context))
+        except Exception:
+            self._intercept_stack.close()
+            self._capture_scope.__exit__(*sys.exc_info())
+            raise
+        return self._capture_context
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        if (
+            self._capture_scope is None
+            or self._capture_context is None
+            or self._intercept_stack is None
+        ):
+            return False
+
+        self._intercept_stack.close()
+        suppress = self._capture_scope.__exit__(exc_type, exc, tb)
+        run = self._capture_context.to_run()
+        write_artifact(
+            run,
+            self.path,
+            metadata={
+                "api": "replaykit.record",
+                "mode": "capture-context",
+                "intercept": list(self.intercept),
+            },
+        )
+        return suppress
+
+
+def _normalize_interceptors(
+    intercept: tuple[CaptureInterceptor, ...] | list[CaptureInterceptor],
+) -> tuple[CaptureInterceptor, ...]:
+    allowed = {"httpx", "requests"}
+    normalized: list[CaptureInterceptor] = []
+    for name in intercept:
+        normalized_name = str(name).strip()
+        if normalized_name not in allowed:
+            raise ValueError(
+                f"Unsupported intercept option: {normalized_name}. "
+                "Supported values: httpx, requests."
+            )
+        if normalized_name == "httpx":
+            normalized.append("httpx")
+        else:
+            normalized.append("requests")
+    if not normalized:
+        return ("httpx", "requests")
+    return tuple(dict.fromkeys(normalized))
 
 
 # NOTE: This function currently records the deterministic demo workflow.
@@ -42,7 +136,10 @@ def record(
     mode: ReplayMode = "stub",
     redaction: bool = True,
     redaction_policy: RedactionPolicy | None = None,
-) -> dict[str, Any]:
+    intercept: tuple[CaptureInterceptor, ...] | list[CaptureInterceptor] | None = None,
+    run_id: str | None = None,
+    timestamp: str | None = None,
+) -> RecordResult | _RecordCaptureScope:
     """Record a run artifact to disk.
 
     Args:
@@ -50,9 +147,14 @@ def record(
         mode: Recording mode. Only ``"stub"`` is supported.
         redaction: Whether redaction is enabled. Only ``True`` is supported in the
             current record flow.
+        intercept: When provided, return a context manager that captures a user code
+            block with selected interceptors.
+        run_id: Optional run id for context-manager capture mode.
+        timestamp: Optional timestamp override for context-manager capture mode.
 
     Returns:
-        Artifact envelope as a dictionary.
+        Artifact envelope dictionary for one-shot demo mode, or a context manager for
+        integration mode.
 
     Raises:
         ValueError: If unsupported mode/redaction arguments are provided.
@@ -61,6 +163,14 @@ def record(
         raise ValueError(f"Unsupported record mode: {mode}")
     if not redaction:
         raise ValueError("record(..., redaction=False) is not supported yet")
+    if intercept is not None:
+        return _RecordCaptureScope(
+            path=path,
+            intercept=_normalize_interceptors(intercept),
+            redaction_policy=redaction_policy,
+            run_id=run_id,
+            timestamp=timestamp,
+        )
 
     run = build_demo_run(redaction_policy=redaction_policy)
     return write_artifact(run, path, metadata={"api": "replaykit.record", "mode": mode})
@@ -246,9 +356,11 @@ def snapshot_assert(
 __all__ = [
     "__version__",
     "ReplayMode",
+    "CaptureInterceptor",
     "AssertionResult",
     "RunDiffResult",
     "SnapshotWorkflowResult",
+    "tool",
     "record",
     "replay",
     "diff",

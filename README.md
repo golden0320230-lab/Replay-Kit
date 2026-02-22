@@ -226,6 +226,16 @@ result = replaykit.diff("examples/runs/m2_capture_boundaries.rpk", "examples/run
 print(result.first_divergence.index if result.first_divergence else "no divergence")
 ```
 
+Library integration capture context (no CLI):
+
+```python
+import replaykit
+import requests
+
+with replaykit.record("runs/library-capture.rpk", intercept=("requests", "httpx")):
+    requests.get("http://127.0.0.1:8080/health", timeout=5)
+```
+
 Public API compatibility policy and semver guarantees:
 
 - `docs/PUBLIC_API.md`
