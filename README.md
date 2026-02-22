@@ -230,6 +230,11 @@ Public API compatibility policy and semver guarantees:
 
 - `docs/PUBLIC_API.md`
 
+Release and upgrade policy:
+
+- `CHANGELOG.md`
+- `docs/RELEASES.md`
+
 ## License
 
 MIT
