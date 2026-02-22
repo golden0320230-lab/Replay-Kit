@@ -9,13 +9,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import requests
 
-from replaypack.capture import tool
-
-
-@tool(name="example.echo")
-def example_tool(value: str) -> dict[str, str]:
-    return {"echo": value}
-
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "ReplayKitExample/1.0"
@@ -41,7 +34,6 @@ def main() -> None:
     try:
         requests.get(f"{base_url}/requests", timeout=5)
         httpx.get(f"{base_url}/httpx", timeout=5)
-        example_tool("hello")
     finally:
         server.shutdown()
         server.server_close()
