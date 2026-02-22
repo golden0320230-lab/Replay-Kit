@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
+import runpy
+import sys
 import time
+import traceback
 import webbrowser
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,9 +25,13 @@ from replaypack.artifact import (
     write_bundle_artifact,
 )
 from replaypack.capture import (
+    InterceptionPolicy,
     RedactionPolicy,
     RedactionPolicyConfigError,
     build_demo_run,
+    capture_run,
+    intercept_httpx,
+    intercept_requests,
     load_redaction_policy_from_file,
 )
 from replaypack.core.types import STEP_TYPES
@@ -72,6 +80,14 @@ class _OutputOptions:
 
 
 _OUTPUT_OPTIONS = _OutputOptions()
+_PYTHON_COMMAND_TOKENS = {"python", "python3"}
+
+
+@dataclass(frozen=True, slots=True)
+class _RecordTargetInvocation:
+    mode: str
+    target: str
+    args: tuple[str, ...]
 
 
 def _load_redaction_policy(config_path: Path | None) -> RedactionPolicy | None:
@@ -156,8 +172,65 @@ def _render_strict_failures(result: AssertionResult, *, max_changes: int) -> str
     return "\n".join(lines)
 
 
-@app.command()
+def _parse_record_target_invocation(raw_args: list[str]) -> _RecordTargetInvocation:
+    args = list(raw_args)
+    if args and args[0] == "--":
+        args = args[1:]
+    if args and Path(args[0]).name in _PYTHON_COMMAND_TOKENS:
+        args = args[1:]
+
+    if not args:
+        raise ValueError("missing target invocation; pass `-- python path/to/script.py`")
+
+    if args[0] == "-m":
+        if len(args) < 2 or not args[1].strip():
+            raise ValueError("module mode requires a module name after -m")
+        return _RecordTargetInvocation(
+            mode="module",
+            target=args[1].strip(),
+            args=tuple(args[2:]),
+        )
+
+    return _RecordTargetInvocation(
+        mode="script",
+        target=args[0],
+        args=tuple(args[1:]),
+    )
+
+
+def _run_record_target(invocation: _RecordTargetInvocation) -> int:
+    previous_argv = list(sys.argv)
+    try:
+        if invocation.mode == "module":
+            sys.argv = [invocation.target, *invocation.args]
+            runpy.run_module(invocation.target, run_name="__main__", alter_sys=True)
+        else:
+            sys.argv = [invocation.target, *invocation.args]
+            runpy.run_path(invocation.target, run_name="__main__")
+        return 0
+    except SystemExit as signal:
+        code = signal.code
+        if code is None:
+            return 0
+        if isinstance(code, int):
+            return code
+        _echo(str(code), err=True)
+        return 1
+    except Exception:
+        traceback.print_exc()
+        return 1
+    finally:
+        sys.argv = previous_argv
+
+
+@app.command(
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True,
+    }
+)
 def record(
+    ctx: typer.Context,
     out: Path = typer.Option(
         Path("runs/demo-recording.rpk"),
         "--out",
@@ -192,13 +265,36 @@ def record(
     ),
 ) -> None:
     """Record an execution run."""
-    if not demo:
-        _echo("record: only --demo is supported in M2", err=True)
+    target_args = list(ctx.args)
+    should_run_target = bool(target_args)
+
+    if not demo and not should_run_target:
+        _echo(
+            "record failed: --no-demo requires a target command after `--`.",
+            err=True,
+        )
         raise typer.Exit(code=2)
 
     try:
         redaction_policy = _load_redaction_policy(redaction_config)
-        run = build_demo_run(redaction_policy=redaction_policy)
+        if should_run_target:
+            invocation = _parse_record_target_invocation(target_args)
+            run_id = f"run-record-{int(time.time() * 1000)}"
+            target_exit_code = 0
+            with capture_run(
+                run_id=run_id,
+                policy=InterceptionPolicy(capture_http_bodies=True),
+                redaction_policy=redaction_policy,
+            ) as capture_context:
+                with ExitStack() as stack:
+                    stack.enter_context(intercept_requests(context=capture_context))
+                    stack.enter_context(intercept_httpx(context=capture_context))
+                    target_exit_code = _run_record_target(invocation)
+                run = capture_context.to_run()
+        else:
+            run = build_demo_run(redaction_policy=redaction_policy)
+            target_exit_code = 0
+
         write_artifact(
             run,
             out,
@@ -209,6 +305,11 @@ def record(
     except ArtifactError as error:
         _echo(f"record failed: {error}", err=True)
         raise typer.Exit(code=1) from error
+
+    if target_exit_code != 0:
+        _echo(f"recorded artifact (target exit {target_exit_code}): {out}")
+        raise typer.Exit(code=target_exit_code)
+
     _echo(f"recorded artifact: {out}")
 
 
