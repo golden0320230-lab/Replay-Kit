@@ -39,6 +39,7 @@ jobs:
 
       - name: Cross-Platform Hash Parity
         run: |
+          python -c "from pathlib import Path; Path('runs/parity').mkdir(parents=True, exist_ok=True)"
           python -m replaypack.ci_parity --source examples/runs/m2_capture_boundaries.rpk --out-dir runs/parity --expected ci/expected_hash_parity.json --json > runs/parity/ci-hash-parity.json
           echo "Parity output written to runs/parity/ci-hash-parity.json"
 
