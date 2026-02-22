@@ -122,3 +122,12 @@ def test_env_plugin_config_auto_activation(tmp_path: Path, monkeypatch: pytest.M
     assert any(record["hook"] == "on_capture_end" for record in records)
 
     reset_plugin_runtime_cache()
+
+
+def test_plugin_docs_include_compatibility_and_example() -> None:
+    docs_path = Path("docs/plugins.md")
+    assert docs_path.exists()
+    text = docs_path.read_text(encoding="utf-8").lower()
+    assert "compatibility rules" in text
+    assert "breaking changes" in text
+    assert "lifecycletraceplugin" in text
