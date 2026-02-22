@@ -48,7 +48,9 @@ As of **February 22, 2026**, ReplayKit currently provides:
 - Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
 - Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.
 - Stable Python API entrypoint (`import replaykit`) and tool decorator capture (`@replaykit.tool`) for library integrations.
-- Cross-platform CI coverage (macOS, Linux, Windows) with a golden-path record/replay/diff/assert gate in GitHub Actions.
+- Cross-platform CI coverage (macOS, Linux, Windows) with golden-path record/replay/assert/diff checks in GitHub Actions.
+- Replay determinism validation in CI via dual replay artifacts compared with `assert`.
+- Replay network-guard validation in CI via dedicated golden-path replay e2e coverage.
 
 ## Quickstart (Runnable Now)
 
@@ -147,7 +149,7 @@ pyproject.toml        Package metadata and CLI entrypoint
 - Post-`M7` update: live fake-provider capture mode (`replaykit live-demo`) with stream/non-stream parity.
 - Post-`M7` update: provider adapter contract and reference adapter (`docs/providers.md`).
 - Post-`M7` update: release polish (`replaykit --version`, install/signing docs).
-- Post-`M7` update: CI golden-path gating in GitHub Actions (record/replay/diff/assert).
+- Post-`M7` update: CI golden-path gating in GitHub Actions (record/replay/assert/diff + replay network guard).
 
 Generate a deterministic capture artifact:
 
