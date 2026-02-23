@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from replaypack.artifact.exceptions import ArtifactChecksumError, ArtifactSigningKeyError
@@ -116,10 +118,30 @@ def write_artifact(
     target.parent.mkdir(parents=True, exist_ok=True)
 
     canonical_artifact = canonicalize(artifact)
-    target.write_text(
-        json.dumps(canonical_artifact, indent=2, ensure_ascii=True, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    serialized = json.dumps(
+        canonical_artifact, indent=2, ensure_ascii=True, sort_keys=True
+    ) + "\n"
+
+    temp_file_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_file.write(serialized)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_file_path = temp_file.name
+        os.replace(temp_file_path, target)
+    finally:
+        if temp_file_path:
+            temp_path = Path(temp_file_path)
+            if temp_path.exists():
+                temp_path.unlink()
     return artifact
 
 
