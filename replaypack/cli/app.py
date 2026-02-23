@@ -13,7 +13,8 @@ from typing import Any
 
 import typer
 
-from replaypack.agents import list_agent_adapter_keys
+from replaypack.agent_capture import build_agent_capture_run
+from replaypack.agents import get_agent_adapter, list_agent_adapter_keys
 from replaypack.artifact import (
     ArtifactError,
     ArtifactMigrationError,
@@ -1731,22 +1732,68 @@ def agent_capture(
             _echo(message, err=True)
         raise typer.Exit(code=2)
 
-    message = (
-        f"agent capture failed: provider '{normalized_agent}' is not wired yet "
-        "(skeleton command ready)."
-    )
-    if json_output:
-        _echo_json(
-            {
-                "status": "error",
-                "exit_code": 1,
-                "message": message,
-                "artifact_path": str(out),
-            }
+    if normalized_agent != "codex":
+        message = (
+            f"agent capture failed: provider '{normalized_agent}' is not wired yet "
+            "(codex support ships first)."
         )
+        if json_output:
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": str(out),
+                }
+            )
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1)
+
+    run_id = f"run-agent-{int(time.time() * 1000)}"
+    try:
+        adapter = get_agent_adapter(normalized_agent)
+        run = build_agent_capture_run(
+            adapter=adapter,
+            agent=normalized_agent,
+            command=command,
+            run_id=run_id,
+        )
+        write_artifact(
+            run,
+            out,
+            metadata={"mode": "agent.capture", "agent": normalized_agent},
+        )
+    except Exception as error:  # pragma: no cover - defensive runtime branch
+        message = f"agent capture failed: {error}"
+        if json_output:
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": str(out),
+                }
+            )
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "agent capture succeeded",
+        "artifact_path": str(out),
+        "agent": normalized_agent,
+        "run_id": run.id,
+        "steps": len(run.steps),
+    }
+    if json_output:
+        _echo_json(payload)
     else:
-        _echo(message, err=True)
-    raise typer.Exit(code=1)
+        _echo(f"agent artifact: {out}")
+        _echo(f"agent={normalized_agent} run_id={run.id} steps={len(run.steps)}")
+    return
 
 
 @agent_app.command("providers")
