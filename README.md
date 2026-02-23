@@ -49,6 +49,7 @@ As of **February 23, 2026**, ReplayKit currently provides:
 - Built-in `llm capture` providers: `fake` (offline deterministic), `openai`, `anthropic`, and `google` (mock-friendly in tests, real-key capable in local runs).
 - `agent` command group with `providers` and `capture` subcommands for coding-agent session timeline capture.
 - Built-in `agent capture` adapters: `codex` and `claude-code` (fixture-runner backed for deterministic CI and local debugging).
+- Passive listener/interceptor mode via `listen start|stop|status|env` for out-of-process provider/agent capture.
 - Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
 - Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.
 - Stable Python API entrypoint (`import replaykit`) and tool decorator capture (`@replaykit.tool`) for library integrations.
@@ -81,6 +82,19 @@ Default wrapper interception scope:
 
 - Captured automatically: `requests` and `httpx`.
 - Not captured automatically: provider SDK calls unless an adapter/hook is enabled.
+
+## Passive Listener Mode (Runnable Now)
+
+Run ReplayKit as a local listener while apps/agents run independently:
+
+```bash
+replaykit listen start --state-file runs/passive/state.json --out runs/passive/capture.rpk --json
+replaykit listen env --state-file runs/passive/state.json --shell bash
+replaykit listen status --state-file runs/passive/state.json --json
+replaykit listen stop --state-file runs/passive/state.json --json
+```
+
+Routing exports from `listen env` include provider base URLs and agent event endpoints. No API keys are emitted.
 
 ## Installation
 
@@ -130,6 +144,10 @@ GEMINI_API_KEY=... replaykit llm capture --provider google --model gemini-1.5-fl
 replaykit agent providers --json
 replaykit agent capture --agent codex --out runs/agent-codex.rpk -- python tests/fixtures/agents/fake_codex_agent.py
 replaykit agent capture --agent claude-code --out runs/agent-claude.rpk -- python tests/fixtures/agents/fake_claude_code_agent.py
+replaykit listen start --json
+replaykit listen status --json
+replaykit listen env --shell bash
+replaykit listen stop --json
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk
@@ -337,6 +355,16 @@ replaykit agent capture --agent codex --out runs/agent-codex.rpk -- python tests
 replaykit agent capture --agent claude-code --out runs/agent-claude.rpk -- python tests/fixtures/agents/fake_claude_code_agent.py
 ```
 
+Passive out-of-process listener capture (provider + agent gateways):
+
+```bash
+replaykit listen start --state-file runs/passive/state.json --out runs/passive/capture.rpk --json
+replaykit listen env --state-file runs/passive/state.json --shell bash
+replaykit listen status --state-file runs/passive/state.json --json
+replaykit assert runs/passive/capture.rpk --candidate runs/passive/capture.rpk --json
+replaykit listen stop --state-file runs/passive/state.json --json
+```
+
 Launch the local UI:
 
 ```bash
@@ -395,6 +423,7 @@ Public API compatibility policy and semver guarantees:
 
 - `docs/PUBLIC_API.md`
 - `docs/plugins.md`
+- `docs/PASSIVE_LISTENER.md`
 
 Release and upgrade policy:
 
