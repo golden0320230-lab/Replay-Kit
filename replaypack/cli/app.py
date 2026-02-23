@@ -504,8 +504,26 @@ def listen_start(
             break
         time.sleep(0.05)
 
-    if process.poll() is not None and started_state is None:
+    if process.poll() is not None:
         message = "listener start failed: daemon terminated during startup."
+        details: dict[str, Any] = {
+            "state_file_exists": state_path.exists(),
+            "process_exit_code": process.poll(),
+        }
+        if isinstance(started_state, dict):
+            started_pid = _coerce_pid(started_state.get("pid"))
+            details.update(
+                {
+                    "state_listener_session_id": started_state.get("listener_session_id"),
+                    "state_pid": started_pid,
+                    "state_pid_running": (
+                        is_pid_running(started_pid) if started_pid > 0 else False
+                    ),
+                    "state_host": started_state.get("host"),
+                    "state_port": started_state.get("port"),
+                }
+            )
+        message = f"{message} details={json.dumps(details, ensure_ascii=True, sort_keys=True)}"
         payload = {
             "status": "error",
             "exit_code": 1,
@@ -525,7 +543,28 @@ def listen_start(
                 process.terminate()
             except OSError:
                 pass
-        message = "listener start failed: startup timed out."
+        details = {
+            "state_file_exists": state_path.exists(),
+            "process_alive": process.poll() is None,
+            "process_exit_code": process.poll(),
+        }
+        if isinstance(started_state, dict):
+            started_pid = _coerce_pid(started_state.get("pid"))
+            details.update(
+                {
+                    "state_listener_session_id": started_state.get("listener_session_id"),
+                    "state_pid": started_pid,
+                    "state_pid_running": (
+                        is_pid_running(started_pid) if started_pid > 0 else False
+                    ),
+                    "state_host": started_state.get("host"),
+                    "state_port": started_state.get("port"),
+                }
+            )
+        message = (
+            "listener start failed: startup timed out. "
+            f"details={json.dumps(details, ensure_ascii=True, sort_keys=True)}"
+        )
         payload = {
             "status": "error",
             "exit_code": 1,
