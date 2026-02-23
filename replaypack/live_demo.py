@@ -31,6 +31,8 @@ def build_live_demo_run(
     *,
     provider: str = "fake",
     stream: bool = False,
+    model: str = "fake-chat",
+    prompt: str = "say hello",
     run_id: str = "run-live-demo-001",
     timestamp: str = "2026-02-22T00:00:00Z",
 ) -> Run:
@@ -52,15 +54,15 @@ def build_live_demo_run(
             if stream:
                 list(
                     client.create(
-                        model="fake-chat",
-                        messages=[{"role": "user", "content": "say hello"}],
+                        model=model,
+                        messages=[{"role": "user", "content": prompt}],
                         stream=True,
                     )
                 )
             else:
                 client.create(
-                    model="fake-chat",
-                    messages=[{"role": "user", "content": "say hello"}],
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
                     stream=False,
                 )
 

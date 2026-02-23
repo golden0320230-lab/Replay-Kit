@@ -104,6 +104,7 @@ replaykit bundle runs/a.rpk --redact default --out incident.bundle
 replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
 replaykit live-demo --out runs/live-demo.rpk --provider fake --stream
+replaykit llm --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk
@@ -288,6 +289,12 @@ Enable determinism guardrails in assert/replay paths:
 ```bash
 replaykit replay runs/demo-recording.rpk --nondeterminism warn
 replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --nondeterminism fail --json
+```
+
+Capture provider-shaped LLM calls without wrapping a target app:
+
+```bash
+replaykit llm --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
 ```
 
 Launch the local UI:
