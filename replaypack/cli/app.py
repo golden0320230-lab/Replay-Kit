@@ -65,6 +65,7 @@ from replaypack.performance import (
 )
 from replaypack.live_demo import build_live_demo_run
 from replaypack.llm_capture import build_fake_llm_run
+from replaypack.providers import list_provider_adapter_keys
 from replaypack.snapshot import (
     SnapshotConfigError,
     assert_snapshot_artifact,
@@ -86,7 +87,6 @@ class _OutputOptions:
 
 _OUTPUT_OPTIONS = _OutputOptions()
 _PYTHON_COMMAND_TOKENS = {"python", "python3"}
-_LLM_PROVIDER_KEYS = ("fake", "openai", "anthropic", "google")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1485,7 +1485,7 @@ def llm_providers(
     ),
 ) -> None:
     """List supported LLM provider keys."""
-    providers = list(_LLM_PROVIDER_KEYS)
+    providers = list(list_provider_adapter_keys())
     if json_output:
         _echo_json(
             {
