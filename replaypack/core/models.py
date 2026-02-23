@@ -18,6 +18,7 @@ class Step:
     input: Any
     output: Any
     metadata: dict[str, Any] = field(default_factory=dict)
+    timestamp: str | None = None
     hash: str | None = None
 
     def __post_init__(self) -> None:
@@ -32,6 +33,7 @@ class Step:
             input=self.input,
             output=self.output,
             metadata=dict(self.metadata),
+            timestamp=self.timestamp,
             hash=compute_step_hash(self.type, self.input, self.output, self.metadata),
         )
 
@@ -48,6 +50,7 @@ class Step:
             "input": self.input,
             "output": self.output,
             "metadata": self.metadata,
+            "timestamp": self.timestamp,
             "hash": computed_hash,
         }
 
@@ -59,6 +62,7 @@ class Step:
             input=raw.get("input"),
             output=raw.get("output"),
             metadata=dict(raw.get("metadata", {})),
+            timestamp=raw.get("timestamp"),
             hash=raw.get("hash"),
         )
 
@@ -71,31 +75,47 @@ class Run:
     timestamp: str
     environment_fingerprint: dict[str, Any]
     runtime_versions: dict[str, Any]
+    source: str | None = None
+    provider: str | None = None
+    agent: str | None = None
     steps: list[Step] = field(default_factory=list)
 
     def with_hashed_steps(self) -> "Run":
         return Run(
             id=self.id,
             timestamp=self.timestamp,
+            source=self.source,
+            provider=self.provider,
+            agent=self.agent,
             environment_fingerprint=dict(self.environment_fingerprint),
             runtime_versions=dict(self.runtime_versions),
             steps=[step.with_hash() for step in self.steps],
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.id,
             "timestamp": self.timestamp,
             "environment_fingerprint": self.environment_fingerprint,
             "runtime_versions": self.runtime_versions,
             "steps": [step.to_dict() for step in self.steps],
         }
+        if self.source is not None:
+            payload["source"] = self.source
+        if self.provider is not None:
+            payload["provider"] = self.provider
+        if self.agent is not None:
+            payload["agent"] = self.agent
+        return payload
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Run":
         return cls(
             id=raw["id"],
             timestamp=raw["timestamp"],
+            source=raw.get("source"),
+            provider=raw.get("provider"),
+            agent=raw.get("agent"),
             environment_fingerprint=dict(raw.get("environment_fingerprint", {})),
             runtime_versions=dict(raw.get("runtime_versions", {})),
             steps=[Step.from_dict(step) for step in raw.get("steps", [])],
