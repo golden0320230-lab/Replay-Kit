@@ -231,3 +231,66 @@ def test_cli_llm_capture_openai_uses_mock_transport_and_writes_model_steps(
     assert [step.type for step in run.steps] == ["model.request", "model.response"]
     assert run.steps[0].metadata["provider"] == "openai"
     assert run.steps[1].metadata["provider"] == "openai"
+
+
+def test_cli_llm_capture_anthropic_uses_mock_transport_and_writes_provider_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class _MockResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "id": "msg-mock-001",
+                "content": [{"type": "text", "text": "Hello"}],
+            }
+
+    def _mock_post(
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+        timeout: float,
+        stream: bool,
+    ) -> _MockResponse:
+        assert url.endswith("/v1/messages")
+        assert headers["x-api-key"] == "test-anthropic-key"
+        assert json["model"] == "claude-3-5-sonnet"
+        assert timeout == 30.0
+        assert stream is False
+        return _MockResponse()
+
+    monkeypatch.setattr(requests, "post", _mock_post)
+    out_path = tmp_path / "llm-anthropic-mock.rpk"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-3-5-sonnet",
+            "--prompt",
+            "say hello",
+            "--out",
+            str(out_path),
+            "--json",
+            "--api-key",
+            "test-anthropic-key",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "ok"
+    assert payload["provider"] == "anthropic"
+    run = read_artifact(out_path)
+    assert [step.type for step in run.steps] == ["model.request", "model.response"]
+    assert run.steps[0].metadata["provider"] == "anthropic"
+    assert run.steps[1].metadata["provider"] == "anthropic"
