@@ -34,7 +34,7 @@ ReplayKit is designed to answer one question quickly:
 
 ## Current Capabilities
 
-As of **February 22, 2026**, ReplayKit currently provides:
+As of **February 23, 2026**, ReplayKit currently provides:
 
 - Deterministic run capture to `.rpk` artifacts, including a built-in demo flow and wrapper capture for external script/module execution.
 - Boundary-level capture for `model.*`, `tool.*`, and HTTP (`requests` + `httpx`) workflows with stable canonicalization and hashing.
@@ -45,12 +45,14 @@ As of **February 22, 2026**, ReplayKit currently provides:
 - Snapshot update/assert workflow (`snapshot`) and benchmark workflow (`benchmark`) for repeatable local/CI validation.
 - Local UI (`ui`) with left/right artifact prefill and browser launch support for Git-style run comparisons.
 - Live demo capture mode (`live-demo`) with deterministic fake provider behavior, including optional streaming shape capture.
+- `llm` capture mode for provider-shaped request/response artifacts without target app wrapping (`fake` offline path and `openai` env-key path).
 - Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
 - Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.
 - Stable Python API entrypoint (`import replaykit`) and tool decorator capture (`@replaykit.tool`) for library integrations.
 - Cross-platform CI coverage (macOS, Linux, Windows) with golden-path record/replay/assert/diff checks in GitHub Actions.
 - Replay determinism validation in CI via dual replay artifacts compared with `assert`.
 - Replay network-guard validation in CI via dedicated golden-path replay e2e coverage.
+- Fake-provider capture validation in CI via dedicated golden-path model-capture job.
 
 ## Quickstart (Runnable Now)
 
@@ -118,6 +120,7 @@ replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
 replaykit live-demo --out runs/live-demo.rpk --provider fake --stream
 replaykit llm --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
+OPENAI_API_KEY=... replaykit llm --provider openai --model gpt-4o-mini --prompt "say hello" --out runs/llm-openai.rpk
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk
@@ -164,6 +167,8 @@ pyproject.toml        Package metadata and CLI entrypoint
 - Post-`M7` update: provider adapter contract and reference adapter (`docs/providers.md`).
 - Post-`M7` update: release polish (`replaykit --version`, install/signing docs).
 - Post-`M7` update: CI golden-path gating in GitHub Actions (record/replay/assert/diff + replay network guard).
+- Post-`M7` update: `replaykit llm` command with fake-provider and openai-provider capture paths.
+- Post-`M7` update: release-notes template for provider-capture + target-recording releases.
 
 Generate a deterministic capture artifact:
 
@@ -308,6 +313,7 @@ Capture provider-shaped LLM calls without wrapping a target app:
 
 ```bash
 replaykit llm --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
+OPENAI_API_KEY=... replaykit llm --provider openai --model gpt-4o-mini --prompt "say hello" --out runs/llm-openai.rpk
 ```
 
 Launch the local UI:
