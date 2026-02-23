@@ -14,7 +14,155 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
+from replaypack.artifact import write_artifact
+from replaypack.core.models import Run, Step
+from replaypack.listener_gateway import (
+    build_provider_response,
+    detect_provider,
+    normalize_provider_request,
+    provider_request_fingerprint,
+)
 from replaypack.listener_state import remove_listener_state, write_listener_state
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class _ListenerRunRecorder:
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        out_path: Path,
+        host: str,
+        port: int,
+    ) -> None:
+        self._lock = threading.Lock()
+        self._out_path = out_path
+        self._step_sequence = 0
+        self._request_sequence = 0
+        timestamp = _utc_now()
+        self._run = Run(
+            id=f"run-listener-{session_id}",
+            timestamp=timestamp,
+            source="listener",
+            capture_mode="passive",
+            listener_session_id=session_id,
+            listener_process={
+                "pid": os.getpid(),
+                "executable": sys.executable,
+                "command": list(sys.argv),
+                "cwd": str(Path.cwd()),
+            },
+            listener_bind={"host": host, "port": port},
+            environment_fingerprint={"listener_mode": "passive", "os": os.name},
+            runtime_versions={
+                "python": ".".join(
+                    str(part) for part in sys.version_info[:3]
+                ),
+                "replaykit_listener": "1",
+            },
+            steps=[],
+        )
+        self._persist_locked()
+
+    @property
+    def out_path(self) -> Path:
+        return self._out_path
+
+    def record_provider_transaction(
+        self,
+        *,
+        provider: str,
+        path: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        fail_reason: str | None,
+    ) -> tuple[int, dict[str, Any]]:
+        with self._lock:
+            self._request_sequence += 1
+            request_id = (
+                str(headers.get("x-request-id")).strip()
+                if headers.get("x-request-id")
+                else f"{provider}-request-{self._request_sequence:06d}"
+            )
+            request = normalize_provider_request(
+                provider=provider,
+                path=path,
+                payload=payload,
+                headers=headers,
+                request_id=request_id,
+            )
+            correlation_id = provider_request_fingerprint(request)
+
+            status_code, response_payload, normalized_response = build_provider_response(
+                request=request,
+                sequence=self._request_sequence,
+                fail_reason=fail_reason,
+            )
+
+            self._run.steps.append(
+                Step(
+                    id=self._next_step_id(),
+                    type="model.request",
+                    input={
+                        "provider": provider,
+                        "path": path,
+                        "request_id": request.request_id,
+                        "model": request.model,
+                        "stream": request.stream,
+                        "headers": request.headers,
+                        "payload": request.payload,
+                    },
+                    output={"status": "captured"},
+                    metadata={
+                        "provider": provider,
+                        "path": path,
+                        "request_id": request.request_id,
+                        "correlation_id": correlation_id,
+                        "capture_mode": "passive",
+                    },
+                    timestamp=_utc_now(),
+                )
+            )
+            self._run.steps.append(
+                Step(
+                    id=self._next_step_id(),
+                    type="model.response",
+                    input={"request_id": request.request_id},
+                    output={
+                        "status_code": status_code,
+                        "output": normalized_response.response,
+                        "assembled_text": normalized_response.assembled_text,
+                        "error": normalized_response.error,
+                    },
+                    metadata={
+                        "provider": provider,
+                        "path": path,
+                        "request_id": request.request_id,
+                        "correlation_id": correlation_id,
+                        "capture_mode": "passive",
+                    },
+                    timestamp=_utc_now(),
+                )
+            )
+            self._persist_locked()
+            return status_code, response_payload
+
+    def _next_step_id(self) -> str:
+        self._step_sequence += 1
+        return f"step-{self._step_sequence:06d}"
+
+    def _persist_locked(self) -> None:
+        write_artifact(
+            self._run,
+            self._out_path,
+            metadata={
+                "mode": "listener.passive",
+                "listener_session_id": self._run.listener_session_id,
+            },
+        )
 
 
 class _ReplayListenerServer(ThreadingHTTPServer):
@@ -25,10 +173,12 @@ class _ReplayListenerServer(ThreadingHTTPServer):
         *,
         session_id: str,
         state_file: Path,
+        recorder: _ListenerRunRecorder | None = None,
     ) -> None:
         super().__init__(server_address, request_handler_class)
         self.session_id = session_id
         self.state_file = state_file
+        self.recorder = recorder
 
 
 class _ListenerHandler(BaseHTTPRequestHandler):
@@ -36,6 +186,10 @@ class _ListenerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlsplit(self.path)
+        recorder = self.server.recorder
+        if recorder is None:
+            self._write_json(503, {"status": "error", "message": "recorder not ready"})
+            return
         if parsed.path == "/health":
             self._write_json(
                 200,
@@ -43,6 +197,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                     "status": "ok",
                     "session_id": self.server.session_id,
                     "pid": os.getpid(),
+                    "artifact_path": str(recorder.out_path),
                 },
             )
             return
@@ -61,10 +216,62 @@ class _ListenerHandler(BaseHTTPRequestHandler):
 
             threading.Thread(target=_shutdown, daemon=True).start()
             return
-        self._write_json(404, {"status": "error", "message": "not found"})
+
+        provider = detect_provider(parsed.path)
+        if provider is None:
+            self._write_json(404, {"status": "error", "message": "unsupported path"})
+            return
+
+        recorder = self.server.recorder
+        if recorder is None:
+            self._write_json(503, {"status": "error", "message": "recorder not ready"})
+            return
+
+        payload, parse_error = self._read_json_body()
+        fail_reason = self.headers.get("x-replaykit-fail")
+        if parse_error and not fail_reason:
+            fail_reason = parse_error
+
+        try:
+            status_code, response_body = recorder.record_provider_transaction(
+                provider=provider,
+                path=parsed.path,
+                payload=payload,
+                headers={str(key): str(value) for key, value in self.headers.items()},
+                fail_reason=fail_reason,
+            )
+        except Exception as error:
+            # Preserve caller flow with explicit provider-like error.
+            self._write_json(
+                502,
+                {
+                    "error": {
+                        "type": "listener_gateway_error",
+                        "message": str(error),
+                        "provider": provider,
+                    }
+                },
+            )
+            return
+
+        self._write_json(status_code, response_body)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def _read_json_body(self) -> tuple[dict[str, Any], str | None]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(length) if length > 0 else b""
+        if not body:
+            return {}, None
+        decoded = body.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(decoded)
+        except json.JSONDecodeError:
+            return {"raw_body": decoded}, "invalid_json_body"
+        if isinstance(parsed, dict):
+            return parsed, None
+        return {"raw_body": decoded}, "non_object_json_body"
 
     def _write_json(self, status_code: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
@@ -84,17 +291,29 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=0, type=int)
     parser.add_argument("--session-id", required=True)
+    parser.add_argument(
+        "--out",
+        default=Path("runs/listener/listener-capture.rpk"),
+        type=Path,
+    )
     return parser
 
 
-def _runtime_payload(*, session_id: str, host: str, port: int) -> dict[str, Any]:
+def _runtime_payload(
+    *,
+    session_id: str,
+    host: str,
+    port: int,
+    out_path: Path,
+) -> dict[str, Any]:
     return {
         "status": "running",
         "listener_session_id": session_id,
         "pid": os.getpid(),
         "host": host,
         "port": port,
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "artifact_path": str(out_path),
+        "started_at": _utc_now(),
         "process": {
             "pid": os.getpid(),
             "executable": sys.executable,
@@ -114,18 +333,26 @@ def main(argv: list[str] | None = None) -> int:
             _ListenerHandler,
             session_id=args.session_id,
             state_file=args.state_file,
+            recorder=None,
         )
     except OSError as error:
         print(f"listener daemon failed: {error}", file=sys.stderr)
         return 1
 
     host, port = server.server_address[0], int(server.server_address[1])
+    server.recorder = _ListenerRunRecorder(
+        session_id=args.session_id,
+        out_path=args.out,
+        host=host,
+        port=port,
+    )
     write_listener_state(
         args.state_file,
         _runtime_payload(
             session_id=args.session_id,
             host=host,
             port=port,
+            out_path=args.out,
         ),
     )
 
