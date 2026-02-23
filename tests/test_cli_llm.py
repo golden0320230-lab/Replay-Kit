@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import requests
 from typer.testing import CliRunner
 
 from replaypack.artifact import read_artifact
@@ -168,3 +169,65 @@ def test_cli_llm_capture_redacts_secret_patterns_in_artifact(tmp_path: Path) -> 
     prompt = run.steps[0].input["input"]["payload"]["messages"][0]["content"]
     assert "[REDACTED]" in prompt
     assert "sk-1234567890abcdefghij" not in prompt
+
+
+def test_cli_llm_capture_openai_uses_mock_transport_and_writes_model_steps(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class _MockResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "id": "chatcmpl-mock-001",
+                "choices": [{"message": {"role": "assistant", "content": "Hello"}}],
+            }
+
+    def _mock_post(
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+        timeout: float,
+        stream: bool,
+    ) -> _MockResponse:
+        assert url.endswith("/v1/chat/completions")
+        assert headers["Authorization"].startswith("Bearer ")
+        assert json["model"] == "gpt-4o-mini"
+        assert timeout == 30.0
+        assert stream is False
+        return _MockResponse()
+
+    monkeypatch.setattr(requests, "post", _mock_post)
+    out_path = tmp_path / "llm-openai-mock.rpk"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-4o-mini",
+            "--prompt",
+            "say hello",
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+        env={"OPENAI_API_KEY": "test-key"},
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "ok"
+    assert payload["provider"] == "openai"
+    run = read_artifact(out_path)
+    assert [step.type for step in run.steps] == ["model.request", "model.response"]
+    assert run.steps[0].metadata["provider"] == "openai"
+    assert run.steps[1].metadata["provider"] == "openai"

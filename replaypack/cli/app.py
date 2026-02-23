@@ -64,7 +64,7 @@ from replaypack.performance import (
     run_benchmark_suite,
 )
 from replaypack.live_demo import build_live_demo_run
-from replaypack.llm_capture import build_fake_llm_run
+from replaypack.llm_capture import build_fake_llm_run, build_openai_llm_run
 from replaypack.providers import list_provider_adapter_keys
 from replaypack.snapshot import (
     SnapshotConfigError,
@@ -1292,38 +1292,16 @@ def _llm_capture_command(
                     _echo(message, err=True)
                 raise typer.Exit(code=2)
 
-            import requests
-
-            base = base_url.rstrip("/")
-            payload = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": stream,
-            }
-
-            with capture_run(
+            run = build_openai_llm_run(
+                model=model,
+                prompt=prompt,
+                stream=stream,
                 run_id=run_id,
-                policy=InterceptionPolicy(capture_http_bodies=True),
+                api_key=api_key,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
                 redaction_policy=redaction_policy,
-            ) as capture_context:
-                with intercept_requests(context=capture_context):
-                    response = requests.post(
-                        f"{base}/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                        timeout=timeout_seconds,
-                        stream=stream,
-                    )
-                    response.raise_for_status()
-                    if stream:
-                        for _ in response.iter_lines():
-                            pass
-                    else:
-                        response.json()
-                run = capture_context.to_run()
+            )
         else:
             message = (
                 f"llm failed: unsupported provider '{provider}'. "
