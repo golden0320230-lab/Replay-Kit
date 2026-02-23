@@ -1279,7 +1279,14 @@ def _llm_capture_command(
                     "Set OPENAI_API_KEY or pass --api-key."
                 )
                 if json_output:
-                    _echo_json({"status": "error", "exit_code": 2, "message": message})
+                    _echo_json(
+                        {
+                            "status": "error",
+                            "exit_code": 2,
+                            "message": message,
+                            "artifact_path": None,
+                        }
+                    )
                 else:
                     _echo(message, err=True)
                 raise typer.Exit(code=2)
@@ -1322,7 +1329,14 @@ def _llm_capture_command(
                 "Expected fake or openai."
             )
             if json_output:
-                _echo_json({"status": "error", "exit_code": 2, "message": message})
+                _echo_json(
+                    {
+                        "status": "error",
+                        "exit_code": 2,
+                        "message": message,
+                        "artifact_path": None,
+                    }
+                )
             else:
                 _echo(message, err=True)
             raise typer.Exit(code=2)
@@ -1340,7 +1354,14 @@ def _llm_capture_command(
     except ArtifactError as error:
         message = f"llm failed: {error}"
         if json_output:
-            _echo_json({"status": "error", "exit_code": 1, "message": message})
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": None,
+                }
+            )
         else:
             _echo(message, err=True)
         raise typer.Exit(code=1) from error
@@ -1349,7 +1370,14 @@ def _llm_capture_command(
     except Exception as error:  # pragma: no cover - defensive provider failure path
         message = f"llm failed: {error}"
         if json_output:
-            _echo_json({"status": "error", "exit_code": 1, "message": message})
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": None,
+                }
+            )
         else:
             _echo(message, err=True)
         raise typer.Exit(code=1) from error
@@ -1357,6 +1385,8 @@ def _llm_capture_command(
     payload = {
         "status": "ok",
         "exit_code": 0,
+        "message": "llm capture succeeded",
+        "artifact_path": str(out),
         "provider": normalized_provider,
         "model": model,
         "stream": stream,
@@ -1465,6 +1495,75 @@ def llm_providers(
         )
     else:
         _echo("\n".join(providers), force=True)
+
+
+@llm_app.command("capture")
+def llm_capture(
+    out: Path = typer.Option(
+        Path("runs/llm-capture.rpk"),
+        "--out",
+        help="Output path for LLM capture artifact.",
+    ),
+    provider: str = typer.Option(
+        "fake",
+        "--provider",
+        help="LLM provider backend. Supported: fake, openai.",
+    ),
+    model: str = typer.Option(
+        "fake-chat",
+        "--model",
+        help="Model identifier for capture payload.",
+    ),
+    prompt: str = typer.Option(
+        "say hello",
+        "--prompt",
+        help="Prompt text for provider request.",
+    ),
+    stream: bool = typer.Option(
+        False,
+        "--stream/--no-stream",
+        help="Capture stream response shape when enabled.",
+    ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar="OPENAI_API_KEY",
+        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
+    ),
+    base_url: str = typer.Option(
+        "https://api.openai.com",
+        "--base-url",
+        help="Provider API base URL for --provider openai.",
+    ),
+    timeout_seconds: float = typer.Option(
+        30.0,
+        "--timeout-seconds",
+        help="HTTP timeout for provider calls.",
+    ),
+    redaction_config: Path | None = typer.Option(
+        None,
+        "--redaction-config",
+        help="Path to JSON redaction policy config.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable llm capture output.",
+    ),
+) -> None:
+    """Capture provider request/response flows without target app wrapping."""
+    _llm_capture_command(
+        out=out,
+        provider=provider,
+        model=model,
+        prompt=prompt,
+        stream=stream,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        redaction_config=redaction_config,
+        json_output=json_output,
+    )
 
 
 @app.command()
