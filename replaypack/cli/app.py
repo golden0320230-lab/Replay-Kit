@@ -1732,24 +1732,6 @@ def agent_capture(
             _echo(message, err=True)
         raise typer.Exit(code=2)
 
-    if normalized_agent != "codex":
-        message = (
-            f"agent capture failed: provider '{normalized_agent}' is not wired yet "
-            "(codex support ships first)."
-        )
-        if json_output:
-            _echo_json(
-                {
-                    "status": "error",
-                    "exit_code": 1,
-                    "message": message,
-                    "artifact_path": str(out),
-                }
-            )
-        else:
-            _echo(message, err=True)
-        raise typer.Exit(code=1)
-
     run_id = f"run-agent-{int(time.time() * 1000)}"
     try:
         adapter = get_agent_adapter(normalized_agent)
