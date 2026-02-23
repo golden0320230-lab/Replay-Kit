@@ -605,7 +605,20 @@ def diff(
         right_run = read_artifact(right)
         redaction_policy = _load_redaction_policy(redaction_config)
     except (ArtifactError, FileNotFoundError) as error:
-        _echo(f"diff failed: {error}", err=True)
+        message = f"diff failed: {error}"
+        if json_output:
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": None,
+                    "left_path": str(left),
+                    "right_path": str(right),
+                }
+            )
+        else:
+            _echo(message, err=True)
         raise typer.Exit(code=1) from error
     if redaction_policy is not None:
         left_run = redact_run_for_bundle(left_run, policy=redaction_policy)
@@ -619,7 +632,19 @@ def diff(
     )
 
     if json_output:
-        _echo_json(result.to_dict())
+        diff_payload = result.to_dict()
+        _echo_json(
+            {
+                **diff_payload,
+                "diff_status": diff_payload.get("status"),
+                "status": "ok",
+                "exit_code": 0,
+                "message": "diff completed",
+                "artifact_path": None,
+                "left_path": str(left),
+                "right_path": str(right),
+            }
+        )
         return
 
     _echo(render_diff_summary(result))
@@ -900,7 +925,15 @@ def verify(
     except (ArtifactError, FileNotFoundError, json.JSONDecodeError) as error:
         message = f"verify failed: {error}"
         if json_output:
-            _echo_json({"status": "error", "valid": False, "exit_code": 1, "message": message})
+            _echo_json(
+                {
+                    "status": "error",
+                    "valid": False,
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": str(artifact),
+                }
+            )
         else:
             _echo(message, err=True)
         raise typer.Exit(code=1) from error
@@ -911,9 +944,15 @@ def verify(
         require_signature=require_signature,
     )
 
-    payload = result.to_dict()
-    payload["artifact_path"] = str(artifact)
-    payload["exit_code"] = 0 if result.valid else 1
+    verification_payload = result.to_dict()
+    payload = {
+        **verification_payload,
+        "verification_status": verification_payload.get("status"),
+        "status": "ok" if result.valid else "error",
+        "message": result.message,
+        "artifact_path": str(artifact),
+        "exit_code": 0 if result.valid else 1,
+    }
 
     if json_output:
         _echo_json(payload)

@@ -59,6 +59,10 @@ def test_cli_diff_json_output() -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout.strip())
 
+    assert payload["status"] == "ok"
+    assert payload["exit_code"] == 0
+    assert payload["message"] == "diff completed"
+    assert payload["artifact_path"] is None
     assert payload["identical"] is False
     assert payload["first_divergence"]["index"] == 3
 
@@ -90,6 +94,26 @@ def test_cli_diff_non_zero_on_missing_file() -> None:
     )
 
     assert result.exit_code == 1
+
+
+def test_cli_diff_json_error_contract_on_missing_file() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "diff",
+            "missing-left.rpk",
+            "missing-right.rpk",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "error"
+    assert payload["exit_code"] == 1
+    assert payload["artifact_path"] is None
+    assert "diff failed" in payload["message"]
 
 
 def test_cli_diff_redaction_config_masks_custom_fields(tmp_path: Path) -> None:
