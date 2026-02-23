@@ -62,6 +62,33 @@ jobs:
           python -m replaypack assert runs/golden/fake-provider-llm-replay-a.rpk --candidate runs/golden/fake-provider-llm-replay-b.rpk --json > runs/golden/fake-provider-llm-assert.json
           echo "Fake-provider LLM capture guard completed (runs/golden/fake-provider-llm*)."
 
+      - name: Golden Path LLM Capture CLI Guard (Stream + Non-Stream)
+        run: |
+          python -c "from pathlib import Path; Path('runs/golden').mkdir(parents=True, exist_ok=True)"
+          python -m replaypack llm capture --provider fake --model fake-chat --prompt "say hello" --out runs/golden/llm-capture-nonstream.rpk --json > runs/golden/llm-capture-nonstream.json
+          python -m replaypack llm capture --provider fake --model fake-chat --prompt "say hello" --stream --out runs/golden/llm-capture-stream.rpk --json > runs/golden/llm-capture-stream.json
+          python -m replaypack assert runs/golden/llm-capture-nonstream.rpk --candidate runs/golden/llm-capture-nonstream.rpk --json > runs/golden/llm-capture-nonstream-assert.json
+          python -m replaypack assert runs/golden/llm-capture-stream.rpk --candidate runs/golden/llm-capture-stream.rpk --json > runs/golden/llm-capture-stream-assert.json
+          echo "LLM capture CLI guard completed (runs/golden/llm-capture-*)."
+
+      - name: Golden Path Agent Capture Guard (Codex + Claude-Code Fixtures)
+        run: |
+          python -c "from pathlib import Path; Path('runs/golden').mkdir(parents=True, exist_ok=True)"
+          python -m replaypack agent capture --agent codex --out runs/golden/agent-codex.rpk --json -- python tests/fixtures/agents/fake_codex_agent.py > runs/golden/agent-codex-summary.json
+          python -m replaypack agent capture --agent claude-code --out runs/golden/agent-claude-code.rpk --json -- python tests/fixtures/agents/fake_claude_code_agent.py > runs/golden/agent-claude-code-summary.json
+          python -m replaypack assert runs/golden/agent-codex.rpk --candidate runs/golden/agent-codex.rpk --json > runs/golden/agent-codex-assert.json
+          python -m replaypack assert runs/golden/agent-claude-code.rpk --candidate runs/golden/agent-claude-code.rpk --json > runs/golden/agent-claude-code-assert.json
+          python - <<'PY'
+          from replaypack.artifact import read_artifact
+          codex = read_artifact("runs/golden/agent-codex.rpk")
+          claude = read_artifact("runs/golden/agent-claude-code.rpk")
+          for run, name in ((codex, "codex"), (claude, "claude-code")):
+              step_types = [step.type for step in run.steps]
+              if "model.request" not in step_types or "model.response" not in step_types:
+                  raise SystemExit(f"{name} artifact missing model request/response steps")
+          print("Agent capture fixtures validated.")
+          PY
+
       - name: Replay Assertion
         run: |
           python -c "from pathlib import Path; Path('runs').mkdir(parents=True, exist_ok=True)"
