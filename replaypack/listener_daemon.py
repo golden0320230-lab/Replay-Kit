@@ -17,12 +17,14 @@ from urllib.parse import urlsplit
 from replaypack.artifact import write_artifact
 from replaypack.core.models import Run, Step
 from replaypack.listener_gateway import (
+    build_best_effort_fallback_response,
     build_provider_response,
     detect_provider,
     normalize_provider_request,
     provider_request_fingerprint,
 )
 from replaypack.listener_agent_gateway import detect_agent, normalize_agent_events
+from replaypack.listener_redaction import redact_listener_headers, redact_listener_value
 from replaypack.listener_state import remove_listener_state, write_listener_state
 
 
@@ -114,17 +116,19 @@ class _ListenerRunRecorder:
                         "request_id": request.request_id,
                         "model": request.model,
                         "stream": request.stream,
-                        "headers": request.headers,
-                        "payload": request.payload,
+                        "headers": redact_listener_headers(request.headers),
+                        "payload": redact_listener_value(request.payload),
                     },
                     output={"status": "captured"},
-                    metadata={
-                        "provider": provider,
-                        "path": path,
-                        "request_id": request.request_id,
-                        "correlation_id": correlation_id,
-                        "capture_mode": "passive",
-                    },
+                    metadata=redact_listener_value(
+                        {
+                            "provider": provider,
+                            "path": path,
+                            "request_id": request.request_id,
+                            "correlation_id": correlation_id,
+                            "capture_mode": "passive",
+                        }
+                    ),
                     timestamp=_utc_now(),
                 )
             )
@@ -132,20 +136,24 @@ class _ListenerRunRecorder:
                 Step(
                     id=self._next_step_id(),
                     type="model.response",
-                    input={"request_id": request.request_id},
+                    input=redact_listener_value({"request_id": request.request_id}),
                     output={
                         "status_code": status_code,
-                        "output": normalized_response.response,
-                        "assembled_text": normalized_response.assembled_text,
-                        "error": normalized_response.error,
+                        "output": redact_listener_value(normalized_response.response),
+                        "assembled_text": redact_listener_value(
+                            normalized_response.assembled_text
+                        ),
+                        "error": redact_listener_value(normalized_response.error),
                     },
-                    metadata={
-                        "provider": provider,
-                        "path": path,
-                        "request_id": request.request_id,
-                        "correlation_id": correlation_id,
-                        "capture_mode": "passive",
-                    },
+                    metadata=redact_listener_value(
+                        {
+                            "provider": provider,
+                            "path": path,
+                            "request_id": request.request_id,
+                            "correlation_id": correlation_id,
+                            "capture_mode": "passive",
+                        }
+                    ),
                     timestamp=_utc_now(),
                 )
             )
@@ -173,9 +181,9 @@ class _ListenerRunRecorder:
                     Step(
                         id=self._next_step_id(),
                         type=normalized_event["step_type"],
-                        input=normalized_event["input"],
-                        output=normalized_event["output"],
-                        metadata=metadata,
+                        input=redact_listener_value(normalized_event["input"]),
+                        output=redact_listener_value(normalized_event["output"]),
+                        metadata=redact_listener_value(metadata),
                         timestamp=_utc_now(),
                     )
                 )
@@ -203,6 +211,36 @@ class _ListenerRunRecorder:
             if captured > 0 or dropped > 0:
                 self._persist_locked()
             return captured, dropped
+
+    def record_internal_error(
+        self,
+        *,
+        category: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            self._run.steps.append(
+                Step(
+                    id=self._next_step_id(),
+                    type="error.event",
+                    input={"source": "listener", "category": category},
+                    output={
+                        "message": message,
+                        "details": redact_listener_value(details or {}),
+                    },
+                    metadata={
+                        "source": "listener",
+                        "category": category,
+                        "capture_mode": "passive",
+                    },
+                    timestamp=_utc_now(),
+                )
+            )
+            try:
+                self._persist_locked()
+            except Exception:
+                return
 
     def _next_step_id(self) -> str:
         self._step_sequence += 1
@@ -233,6 +271,33 @@ class _ReplayListenerServer(ThreadingHTTPServer):
         self.session_id = session_id
         self.state_file = state_file
         self.recorder = recorder
+        self._metrics_lock = threading.Lock()
+        self.capture_errors = 0
+        self.dropped_events = 0
+        self.degraded_responses = 0
+
+    def register_capture_error(self) -> int:
+        with self._metrics_lock:
+            self.capture_errors += 1
+            return self.capture_errors
+
+    def register_dropped_events(self, count: int) -> int:
+        with self._metrics_lock:
+            self.dropped_events += max(0, count)
+            return self.dropped_events
+
+    def register_degraded_response(self) -> int:
+        with self._metrics_lock:
+            self.degraded_responses += 1
+            return self.degraded_responses
+
+    def metrics_payload(self) -> dict[str, int]:
+        with self._metrics_lock:
+            return {
+                "capture_errors": self.capture_errors,
+                "dropped_events": self.dropped_events,
+                "degraded_responses": self.degraded_responses,
+            }
 
 
 class _ListenerHandler(BaseHTTPRequestHandler):
@@ -252,6 +317,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                     "session_id": self.server.session_id,
                     "pid": os.getpid(),
                     "artifact_path": str(recorder.out_path),
+                    "metrics": self.server.metrics_payload(),
                 },
             )
             return
@@ -282,6 +348,8 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                 agent=agent,
                 payload=payload,
             )
+            if dropped > 0:
+                self.server.register_dropped_events(dropped)
             self._write_json(
                 202,
                 {
@@ -289,6 +357,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                     "agent": agent,
                     "captured": captured,
                     "dropped": dropped,
+                    "metrics": self.server.metrics_payload(),
                 },
             )
             return
@@ -313,6 +382,12 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             payload = {"raw_payload": payload}
 
         try:
+            force_capture_fail = (
+                str(self.headers.get("x-replaykit-capture-fail", "")).strip().lower()
+                in {"1", "true", "yes"}
+            )
+            if force_capture_fail:
+                raise RuntimeError("simulated capture failure")
             status_code, response_body = recorder.record_provider_transaction(
                 provider=provider,
                 path=parsed.path,
@@ -321,17 +396,23 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                 fail_reason=fail_reason,
             )
         except Exception as error:
-            # Preserve caller flow with explicit provider-like error.
-            self._write_json(
-                502,
-                {
-                    "error": {
-                        "type": "listener_gateway_error",
-                        "message": str(error),
-                        "provider": provider,
-                    }
+            capture_error_count = self.server.register_capture_error()
+            degraded_sequence = self.server.register_degraded_response()
+            recorder.record_internal_error(
+                category="capture_failure",
+                message="listener capture path failed; served degraded fallback response",
+                details={
+                    "provider": provider,
+                    "path": parsed.path,
+                    "error": str(error),
+                    "capture_error_count": capture_error_count,
                 },
             )
+            status_code, response_body = build_best_effort_fallback_response(
+                provider=provider,
+                sequence=degraded_sequence,
+            )
+            self._write_json(status_code, response_body)
             return
 
         self._write_json(status_code, response_body)
