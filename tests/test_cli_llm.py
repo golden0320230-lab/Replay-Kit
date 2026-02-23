@@ -65,6 +65,35 @@ def test_cli_llm_fake_stream_writes_model_shaped_artifact(tmp_path: Path) -> Non
     assert run.steps[1].output["output"]["assembled_text"] == "Hello"
 
 
+def test_cli_llm_capture_subcommand_returns_contract_json(tmp_path: Path) -> None:
+    out_path = tmp_path / "llm-capture-subcommand.rpk"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "fake",
+            "--model",
+            "fake-chat",
+            "--prompt",
+            "say hello",
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "ok"
+    assert payload["exit_code"] == 0
+    assert payload["message"]
+    assert payload["artifact_path"] == str(out_path)
+    assert out_path.exists()
+
+
 def test_cli_llm_openai_requires_api_key() -> None:
     runner = CliRunner()
     result = runner.invoke(
@@ -93,3 +122,24 @@ def test_cli_llm_rejects_unknown_provider() -> None:
 
     assert result.exit_code == 2
     assert "unsupported provider" in result.output
+
+
+def test_cli_llm_capture_rejects_unknown_provider_json_contract() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "unknown",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "error"
+    assert payload["exit_code"] == 2
+    assert payload["artifact_path"] is None
+    assert "unsupported provider" in payload["message"]
