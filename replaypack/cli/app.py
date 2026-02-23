@@ -475,8 +475,11 @@ def listen_start(
 
     process = subprocess.Popen(
         command,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        close_fds=True,
+        start_new_session=True,
     )
 
     deadline = time.time() + max(0.1, startup_timeout_seconds)
