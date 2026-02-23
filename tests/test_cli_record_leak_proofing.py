@@ -57,6 +57,7 @@ def test_record_mode_uninstalls_interceptors_and_leaves_no_capture_context(
         ],
     )
     assert result.exit_code == 0, result.output
+    assert "recorded artifact" in result.output
     assert out_path.exists()
 
     assert requests.sessions.Session.request is original_requests
@@ -76,4 +77,7 @@ def test_record_mode_uninstalls_interceptors_and_leaves_no_capture_context(
     assert response_requests.status_code == 200
     assert response_httpx.status_code == 200
     assert response_httpx_localhost.status_code == 200
+    assert requests.sessions.Session.request is original_requests
+    assert httpx.Client.request is original_httpx_client
+    assert httpx.AsyncClient.request is original_httpx_async
     assert get_current_context() is None
