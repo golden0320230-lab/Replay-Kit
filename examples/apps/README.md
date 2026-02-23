@@ -24,6 +24,21 @@ replaykit replay runs/manual/example-demo.rpk --out runs/manual/example-replay.r
 replaykit diff runs/manual/example-demo.rpk runs/manual/example-replay.rpk --first-divergence
 ```
 
+## `minimal_target_app.py`
+
+`minimal_target_app.py` is a purpose-built local-only target for wrapper mode:
+
+- starts a stdlib HTTP server on `127.0.0.1`
+- performs one `requests` call
+- performs one `httpx` call
+
+Use it directly or through target-record mode:
+
+```bash
+python3 examples/apps/minimal_target_app.py
+replaykit record --out runs/manual/minimal-target.rpk -- python examples/apps/minimal_target_app.py
+```
+
 ## Record Target Script Example
 
 `record_target_script.py` demonstrates script-mode recording with:
