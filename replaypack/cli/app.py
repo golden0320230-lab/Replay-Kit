@@ -477,12 +477,16 @@ def listen_start(
 
     while time.time() < deadline:
         started_state = load_listener_state(state_path)
-        if (
-            isinstance(started_state, dict)
-            and started_state.get("listener_session_id") == session_id
-            and _coerce_pid(started_state.get("pid")) == process.pid
-        ):
-            break
+        if isinstance(started_state, dict):
+            started_host = str(started_state.get("host", host))
+            started_port = int(started_state.get("port", 0) or 0)
+            if (
+                started_state.get("listener_session_id") == session_id
+                and _coerce_pid(started_state.get("pid")) == process.pid
+                and started_port > 0
+                and _listener_health(started_host, started_port, timeout=0.25) is not None
+            ):
+                break
         if process.poll() is not None:
             break
         time.sleep(0.05)
@@ -507,8 +511,11 @@ def listen_start(
             _echo(message, err=True)
         raise typer.Exit(code=1)
 
-    started_state, _ = _load_running_listener_state(state_path)
-    if started_state is None:
+    if (
+        not isinstance(started_state, dict)
+        or started_state.get("listener_session_id") != session_id
+        or _coerce_pid(started_state.get("pid")) != process.pid
+    ):
         if process.poll() is None:
             try:
                 process.terminate()
@@ -618,10 +625,11 @@ def listen_stop(
         with urllib_request.urlopen(request, timeout=1.0):
             pass
     except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError):
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            pass
+        if pid != os.getpid():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
 
     deadline = time.time() + max(0.1, shutdown_timeout_seconds)
     while time.time() < deadline:

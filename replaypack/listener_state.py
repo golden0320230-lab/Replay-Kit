@@ -49,7 +49,7 @@ def is_pid_running(pid: int) -> bool:
     if hasattr(os, "waitpid") and wnohang is not None:
         try:
             waited_pid, _status = os.waitpid(pid, wnohang)
-        except ChildProcessError:
+        except (ChildProcessError, OSError):
             waited_pid = 0
         if waited_pid == pid:
             return False
@@ -59,4 +59,6 @@ def is_pid_running(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError:
+        return False
     return True
