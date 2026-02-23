@@ -143,3 +143,28 @@ def test_cli_llm_capture_rejects_unknown_provider_json_contract() -> None:
     assert payload["exit_code"] == 2
     assert payload["artifact_path"] is None
     assert "unsupported provider" in payload["message"]
+
+
+def test_cli_llm_capture_redacts_secret_patterns_in_artifact(tmp_path: Path) -> None:
+    out_path = tmp_path / "llm-redacted.rpk"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "fake",
+            "--prompt",
+            "use sk-1234567890abcdefghij please",
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    run = read_artifact(out_path)
+    prompt = run.steps[0].input["input"]["payload"]["messages"][0]["content"]
+    assert "[REDACTED]" in prompt
+    assert "sk-1234567890abcdefghij" not in prompt

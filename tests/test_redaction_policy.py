@@ -61,3 +61,21 @@ def test_load_redaction_policy_from_file(tmp_path: Path) -> None:
     assert policy.version == "team-policy-2"
     assert redacted["request_id"] == "[REDACTED]"
 
+
+def test_default_redaction_masks_authorization_and_secret_payload_keys() -> None:
+    redacted = redact_payload(
+        {
+            "Authorization": "Bearer sk-verysecret0000000000",
+            "api_key": "key-123",
+            "token": "token-456",
+            "secret": "secret-789",
+            "password": "pass-000",
+            "safe": "visible",
+        }
+    )
+    assert redacted["Authorization"] == "[REDACTED]"
+    assert redacted["api_key"] == "[REDACTED]"
+    assert redacted["token"] == "[REDACTED]"
+    assert redacted["secret"] == "[REDACTED]"
+    assert redacted["password"] == "[REDACTED]"
+    assert redacted["safe"] == "visible"
