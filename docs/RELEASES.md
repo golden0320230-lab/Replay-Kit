@@ -21,7 +21,9 @@ This document defines the release/tag workflow for ReplayKit.
 1. Ensure `main` is green in CI.
 2. Update:
    - `replaykit/__init__.py` (`__version__`)
-   - `CHANGELOG.md` (`[Unreleased]` -> new version/date section)
+   - `CHANGELOG.md`:
+     - move entries from `[Unreleased]` (`Added` / `Changed` / `Fixed`) into `## [X.Y.Z]`
+     - add release date (`## [X.Y.Z] - YYYY-MM-DD`)
 3. Commit and push:
 
 ```bash
