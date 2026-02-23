@@ -84,4 +84,6 @@ def build_fake_llm_run(
         second.metadata["provider_adapter"] = adapter.name
         second.metadata["adapter_name"] = "fake.provider-adapter"
 
+    run.source = "llm.capture"
+    run.provider = adapter.name
     return run

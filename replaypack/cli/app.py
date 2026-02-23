@@ -1341,6 +1341,8 @@ def _llm_capture_command(
                 _echo(message, err=True)
             raise typer.Exit(code=2)
 
+        run.source = "llm.capture"
+        run.provider = normalized_provider
         write_artifact(
             run,
             out,
