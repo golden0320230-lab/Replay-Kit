@@ -80,6 +80,11 @@ jobs:
           python -m replaypack assert runs/golden/agent-claude-code.rpk --candidate runs/golden/agent-claude-code.rpk --json > runs/golden/agent-claude-code-assert.json
           python -c "from replaypack.artifact import read_artifact; pairs=((read_artifact('runs/golden/agent-codex.rpk'),'codex'),(read_artifact('runs/golden/agent-claude-code.rpk'),'claude-code')); missing=[name for run,name in pairs if ('model.request' not in [s.type for s in run.steps] or 'model.response' not in [s.type for s in run.steps])]; import sys; print('Agent capture fixtures validated.' if not missing else f'Missing model request/response steps for: {missing}'); sys.exit(1 if missing else 0)"
 
+      - name: Golden Path Passive Listener Gateway Guard
+        run: |
+          python ci/passive_listener_golden_path.py
+          echo "Passive listener golden path completed (runs/passive/*)."
+
       - name: Replay Assertion
         run: |
           python -c "from pathlib import Path; Path('runs').mkdir(parents=True, exist_ok=True)"
