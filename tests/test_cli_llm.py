@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 import requests
 from typer.testing import CliRunner
 
@@ -363,3 +364,114 @@ def test_cli_llm_capture_google_uses_mock_transport_and_writes_provider_metadata
     assert [step.type for step in run.steps] == ["model.request", "model.response"]
     assert run.steps[0].metadata["provider"] == "google"
     assert run.steps[1].metadata["provider"] == "google"
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "base_url", "chunks", "expected_text"),
+    [
+        (
+            "openai",
+            "gpt-4o-mini",
+            "https://api.openai.com",
+            [
+                {"choices": [{"delta": {"content": "Hel"}}]},
+                {"choices": [{"delta": {"content": "lo"}}]},
+            ],
+            "Hello",
+        ),
+        (
+            "anthropic",
+            "claude-3-5-sonnet",
+            "https://api.anthropic.com",
+            [
+                {"delta": {"text": "Hel"}},
+                {"delta": {"text": "lo"}},
+            ],
+            "Hello",
+        ),
+        (
+            "google",
+            "gemini-1.5-flash",
+            "https://generativelanguage.googleapis.com",
+            [
+                {"candidates": [{"content": {"parts": [{"text": "Hel"}]}}]},
+                {"candidates": [{"content": {"parts": [{"text": "lo"}]}}]},
+            ],
+            "Hello",
+        ),
+    ],
+)
+def test_cli_llm_capture_streaming_records_chunks_and_assembled_text(
+    provider: str,
+    model: str,
+    base_url: str,
+    chunks: list[dict[str, object]],
+    expected_text: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class _MockStreamResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_lines(self):
+            lines = [f"data: {json.dumps(chunk)}".encode("utf-8") for chunk in chunks]
+            lines.append(b"data: [DONE]")
+            return lines
+
+        def json(self) -> dict[str, object]:
+            return {}
+
+    def _mock_post(
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+        timeout: float,
+        stream: bool,
+    ) -> _MockStreamResponse:
+        assert url.startswith(base_url)
+        assert json["stream"] is True
+        assert timeout == 30.0
+        assert stream is True
+        if provider == "openai":
+            assert headers["Authorization"] == "Bearer test-stream-key"
+        elif provider == "anthropic":
+            assert headers["x-api-key"] == "test-stream-key"
+        else:
+            assert headers["x-goog-api-key"] == "test-stream-key"
+        return _MockStreamResponse()
+
+    monkeypatch.setattr(requests, "post", _mock_post)
+    out_path = tmp_path / f"llm-{provider}-stream.rpk"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            provider,
+            "--model",
+            model,
+            "--prompt",
+            "say hello",
+            "--stream",
+            "--api-key",
+            "test-stream-key",
+            "--base-url",
+            base_url,
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    run = read_artifact(out_path)
+    stream_payload = run.steps[1].output["output"]
+    assert stream_payload["stream"] is True
+    assert stream_payload["assembled_text"] == expected_text
+    assert len(stream_payload["chunks"]) == 2
