@@ -83,3 +83,28 @@ replaykit.snapshot_assert(name, candidate, *, snapshots_dir="snapshots", update=
   - run `runtime_versions` mismatch
   - per-step `metadata` drift (including volatile metadata fields)
 - Internal modules under `replaypack.*` are implementation details and may change without deprecation guarantees.
+
+## Record Behavior Reference
+
+Direct library call (demo flow):
+
+```python
+import replaykit
+
+replaykit.record("runs/demo.rpk")
+```
+
+CLI target-command capture (real app flow):
+
+```bash
+replaykit record --out runs/app.rpk -- python examples/apps/minimal_app.py
+```
+
+Library context-manager capture (in-process instrumentation):
+
+```python
+import replaykit
+
+with replaykit.record("runs/library.rpk", intercept=("requests", "httpx")):
+    ...
+```
