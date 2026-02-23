@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socketserver
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -260,6 +261,13 @@ class _ListenerRunRecorder:
 class _ReplayListenerServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+    def server_bind(self) -> None:
+        # Avoid reverse-DNS lookup latency in HTTPServer.server_bind/getfqdn.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 
     def __init__(
         self,

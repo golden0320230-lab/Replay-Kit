@@ -322,12 +322,21 @@ def _coerce_pid(value: Any) -> int:
 def _listener_health(host: str, port: int, *, timeout: float = 0.5) -> dict[str, Any] | None:
     url = f"http://{host}:{port}/health"
     request = urllib_request.Request(url, method="GET")
+    # Listener probes must bypass proxy configuration so localhost health checks
+    # remain reliable on CI runners with proxy env vars set.
+    opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
     try:
-        with urllib_request.urlopen(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
             if isinstance(payload, dict):
                 return payload
-    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, json.JSONDecodeError):
+    except (
+        urllib_error.URLError,
+        urllib_error.HTTPError,
+        TimeoutError,
+        OSError,
+        json.JSONDecodeError,
+    ):
         return None
     return None
 
@@ -377,7 +386,7 @@ def listen_start(
         help="Artifact path for listener-captured provider/agent traffic.",
     ),
     startup_timeout_seconds: float = typer.Option(
-        5.0,
+        15.0,
         "--startup-timeout-seconds",
         help="Max time to wait for daemon startup.",
     ),
@@ -466,34 +475,36 @@ def listen_start(
 
     process = subprocess.Popen(
         command,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
         start_new_session=True,
     )
 
     deadline = time.time() + max(0.1, startup_timeout_seconds)
     started_state: dict[str, Any] | None = None
+    listener_ready = False
 
     while time.time() < deadline:
         started_state = load_listener_state(state_path)
-        if (
-            isinstance(started_state, dict)
-            and started_state.get("listener_session_id") == session_id
-            and _coerce_pid(started_state.get("pid")) == process.pid
-        ):
-            break
+        if isinstance(started_state, dict):
+            started_port = int(started_state.get("port", 0) or 0)
+            started_pid = _coerce_pid(started_state.get("pid"))
+            if (
+                started_state.get("listener_session_id") == session_id
+                and started_port > 0
+                and started_pid > 0
+                and is_pid_running(started_pid)
+            ):
+                listener_ready = True
+                break
         if process.poll() is not None:
             break
         time.sleep(0.05)
 
-    if process.poll() is not None and started_state is None:
-        stderr_output = ""
-        if process.stderr is not None:
-            stderr_output = process.stderr.read().strip()
+    if process.poll() is not None:
         message = "listener start failed: daemon terminated during startup."
-        if stderr_output:
-            message = f"{message} {stderr_output}"
         payload = {
             "status": "error",
             "exit_code": 1,
@@ -507,8 +518,7 @@ def listen_start(
             _echo(message, err=True)
         raise typer.Exit(code=1)
 
-    started_state, _ = _load_running_listener_state(state_path)
-    if started_state is None:
+    if not listener_ready:
         if process.poll() is None:
             try:
                 process.terminate()
@@ -614,14 +624,16 @@ def listen_stop(
         f"http://{host}:{port}/shutdown",
         method="POST",
     )
+    opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
     try:
-        with urllib_request.urlopen(request, timeout=1.0):
+        with opener.open(request, timeout=1.0):
             pass
-    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError):
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            pass
+    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, OSError):
+        if os.name != "nt" and pid != os.getpid():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
 
     deadline = time.time() + max(0.1, shutdown_timeout_seconds)
     while time.time() < deadline:
@@ -698,7 +710,9 @@ def listen_status(
 
     host = str(running_state.get("host", "127.0.0.1"))
     port = int(running_state.get("port", 0) or 0)
+    pid = _coerce_pid(running_state.get("pid"))
     health = _listener_health(host, port)
+    healthy = health is not None or (pid > 0 and is_pid_running(pid))
     payload = {
         "status": "ok",
         "exit_code": 0,
@@ -707,11 +721,11 @@ def listen_status(
         "running": True,
         "state_file": str(state_path),
         "listener_session_id": running_state.get("listener_session_id"),
-        "pid": _coerce_pid(running_state.get("pid")),
+        "pid": pid,
         "host": host,
         "port": port,
         "artifact_out": running_state.get("artifact_path"),
-        "healthy": health is not None,
+        "healthy": healthy,
         "health": health,
         "stale_cleanup": stale_cleanup,
     }
