@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socketserver
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -261,6 +262,13 @@ class _ReplayListenerServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
+    def server_bind(self) -> None:
+        # Avoid reverse-DNS lookup latency in HTTPServer.server_bind/getfqdn.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
+
     def __init__(
         self,
         server_address: tuple[str, int],
@@ -487,28 +495,11 @@ def _runtime_payload(
     }
 
 
-def _startup_log_path(state_file: Path) -> Path:
-    suffix = state_file.suffix or ".json"
-    return state_file.with_suffix(f"{suffix}.startup.log")
-
-
-def _append_startup_marker(state_file: Path, stage: str) -> None:
-    path = _startup_log_path(state_file)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = f"{_utc_now()} stage={stage}\n"
-    path.write_text(
-        (path.read_text(encoding="utf-8") if path.exists() else "") + line,
-        encoding="utf-8",
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     server: _ReplayListenerServer | None = None
-    _append_startup_marker(args.state_file, "args.parsed")
 
     try:
-        _append_startup_marker(args.state_file, "server.create.begin")
         server = _ReplayListenerServer(
             (args.host, args.port),
             _ListenerHandler,
@@ -516,22 +507,17 @@ def main(argv: list[str] | None = None) -> int:
             state_file=args.state_file,
             recorder=None,
         )
-        _append_startup_marker(args.state_file, "server.create.ok")
     except OSError as error:
-        _append_startup_marker(args.state_file, f"server.create.error:{error}")
         print(f"listener daemon failed: {error}", file=sys.stderr)
         return 1
 
     host, port = server.server_address[0], int(server.server_address[1])
-    _append_startup_marker(args.state_file, "recorder.create.begin")
     server.recorder = _ListenerRunRecorder(
         session_id=args.session_id,
         out_path=args.out,
         host=host,
         port=port,
     )
-    _append_startup_marker(args.state_file, "recorder.create.ok")
-    _append_startup_marker(args.state_file, "state.write.begin")
     write_listener_state(
         args.state_file,
         _runtime_payload(
@@ -541,7 +527,6 @@ def main(argv: list[str] | None = None) -> int:
             out_path=args.out,
         ),
     )
-    _append_startup_marker(args.state_file, "state.write.ok")
 
     def _handle_signal(_signum: int, _frame: Any) -> None:
         if server is not None:
@@ -551,13 +536,10 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
 
     try:
-        _append_startup_marker(args.state_file, "serve_forever.begin")
         server.serve_forever(poll_interval=0.2)
     finally:
-        _append_startup_marker(args.state_file, "serve_forever.end")
         remove_listener_state(args.state_file)
         server.server_close()
-        _append_startup_marker(args.state_file, "shutdown.complete")
 
     return 0
 
