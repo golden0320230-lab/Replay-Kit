@@ -124,6 +124,7 @@ Listener persistence enforces redaction before artifact writes:
 
 - Sensitive headers are masked (`authorization`, token/key/secret-like names).
 - Sensitive payload fields (tokens, API keys, passwords, cookies) are masked.
+- Sensitive query parameters are masked before request step persistence.
 - Secret-like patterns in string values are redacted.
 
 Caveats:
