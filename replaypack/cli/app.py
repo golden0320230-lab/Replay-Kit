@@ -73,6 +73,8 @@ from replaypack.snapshot import (
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
+llm_app = typer.Typer(help="Capture provider request/response flows.")
+app.add_typer(llm_app, name="llm")
 
 
 @dataclass(slots=True)
@@ -84,6 +86,7 @@ class _OutputOptions:
 
 _OUTPUT_OPTIONS = _OutputOptions()
 _PYTHON_COMMAND_TOKENS = {"python", "python3"}
+_LLM_PROVIDER_KEYS = ("fake", "openai", "anthropic", "google")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1243,61 +1246,19 @@ def live_demo(
         _echo(f"live-demo artifact: {out}")
 
 
-@app.command()
-def llm(
-    out: Path = typer.Option(
-        Path("runs/llm-capture.rpk"),
-        "--out",
-        help="Output path for LLM capture artifact.",
-    ),
-    provider: str = typer.Option(
-        "fake",
-        "--provider",
-        help="LLM provider backend. Supported: fake, openai.",
-    ),
-    model: str = typer.Option(
-        "fake-chat",
-        "--model",
-        help="Model identifier for capture payload.",
-    ),
-    prompt: str = typer.Option(
-        "say hello",
-        "--prompt",
-        help="Prompt text for provider request.",
-    ),
-    stream: bool = typer.Option(
-        False,
-        "--stream/--no-stream",
-        help="Capture stream response shape when enabled.",
-    ),
-    api_key: str | None = typer.Option(
-        None,
-        "--api-key",
-        envvar="OPENAI_API_KEY",
-        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
-    ),
-    base_url: str = typer.Option(
-        "https://api.openai.com",
-        "--base-url",
-        help="Provider API base URL for --provider openai.",
-    ),
-    timeout_seconds: float = typer.Option(
-        30.0,
-        "--timeout-seconds",
-        help="HTTP timeout for provider calls.",
-    ),
-    redaction_config: Path | None = typer.Option(
-        None,
-        "--redaction-config",
-        help="Path to JSON redaction policy config.",
-    ),
-    json_output: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit machine-readable llm capture output.",
-    ),
+def _llm_capture_command(
+    *,
+    out: Path,
+    provider: str,
+    model: str,
+    prompt: str,
+    stream: bool,
+    api_key: str | None,
+    base_url: str,
+    timeout_seconds: float,
+    redaction_config: Path | None,
+    json_output: bool,
 ) -> None:
-    """Capture provider request/response flows without target app wrapping."""
     normalized_provider = provider.strip().lower()
     run_id = f"run-llm-{int(time.time() * 1000)}"
 
@@ -1408,6 +1369,102 @@ def llm(
         _echo_json(payload)
     else:
         _echo(f"llm artifact: {out}")
+
+
+@llm_app.callback(invoke_without_command=True)
+def llm(
+    ctx: typer.Context,
+    out: Path = typer.Option(
+        Path("runs/llm-capture.rpk"),
+        "--out",
+        help="Output path for LLM capture artifact.",
+    ),
+    provider: str = typer.Option(
+        "fake",
+        "--provider",
+        help="LLM provider backend. Supported: fake, openai.",
+    ),
+    model: str = typer.Option(
+        "fake-chat",
+        "--model",
+        help="Model identifier for capture payload.",
+    ),
+    prompt: str = typer.Option(
+        "say hello",
+        "--prompt",
+        help="Prompt text for provider request.",
+    ),
+    stream: bool = typer.Option(
+        False,
+        "--stream/--no-stream",
+        help="Capture stream response shape when enabled.",
+    ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar="OPENAI_API_KEY",
+        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
+    ),
+    base_url: str = typer.Option(
+        "https://api.openai.com",
+        "--base-url",
+        help="Provider API base URL for --provider openai.",
+    ),
+    timeout_seconds: float = typer.Option(
+        30.0,
+        "--timeout-seconds",
+        help="HTTP timeout for provider calls.",
+    ),
+    redaction_config: Path | None = typer.Option(
+        None,
+        "--redaction-config",
+        help="Path to JSON redaction policy config.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable llm capture output.",
+    ),
+) -> None:
+    """Capture provider request/response flows without target app wrapping."""
+    if ctx.invoked_subcommand is not None:
+        return
+    _llm_capture_command(
+        out=out,
+        provider=provider,
+        model=model,
+        prompt=prompt,
+        stream=stream,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        redaction_config=redaction_config,
+        json_output=json_output,
+    )
+
+
+@llm_app.command("providers")
+def llm_providers(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable provider listing output.",
+    ),
+) -> None:
+    """List supported LLM provider keys."""
+    providers = list(_LLM_PROVIDER_KEYS)
+    if json_output:
+        _echo_json(
+            {
+                "status": "ok",
+                "exit_code": 0,
+                "message": "supported llm providers",
+                "artifact_path": None,
+                "providers": providers,
+            }
+        )
+    else:
+        _echo("\n".join(providers), force=True)
 
 
 @app.command()
