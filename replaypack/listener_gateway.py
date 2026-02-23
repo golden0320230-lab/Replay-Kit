@@ -125,6 +125,36 @@ def build_provider_response(
     return 200, response, normalized
 
 
+def build_best_effort_fallback_response(
+    *,
+    provider: str,
+    sequence: int,
+) -> tuple[int, dict[str, Any]]:
+    text = "ReplayKit capture degraded fallback response"
+    if provider == "openai":
+        body = {
+            "id": f"chatcmpl-fallback-{sequence:06d}",
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": text}}],
+            "_replaykit": {"capture_status": "degraded"},
+        }
+    elif provider == "anthropic":
+        body = {
+            "id": f"msg-fallback-{sequence:06d}",
+            "type": "message",
+            "content": [{"type": "text", "text": text}],
+            "_replaykit": {"capture_status": "degraded"},
+        }
+    else:
+        body = {
+            "candidates": [
+                {"content": {"role": "model", "parts": [{"text": text}]}}
+            ],
+            "_replaykit": {"capture_status": "degraded"},
+        }
+    return 200, body
+
+
 def normalize_provider_response(
     *,
     provider: str,
