@@ -3,6 +3,7 @@
 from typing import Literal
 
 StepType = Literal[
+    "agent.command",
     "prompt.render",
     "model.request",
     "model.response",
@@ -13,6 +14,7 @@ StepType = Literal[
 ]
 
 STEP_TYPES: tuple[str, ...] = (
+    "agent.command",
     "prompt.render",
     "model.request",
     "model.response",
