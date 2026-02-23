@@ -45,7 +45,10 @@ As of **February 23, 2026**, ReplayKit currently provides:
 - Snapshot update/assert workflow (`snapshot`) and benchmark workflow (`benchmark`) for repeatable local/CI validation.
 - Local UI (`ui`) with left/right artifact prefill and browser launch support for Git-style run comparisons.
 - Live demo capture mode (`live-demo`) with deterministic fake provider behavior, including optional streaming shape capture.
-- `llm` capture mode for provider-shaped request/response artifacts without target app wrapping (`fake` offline path and `openai` env-key path).
+- `llm` command group with `providers` and `capture` subcommands for provider-shaped request/response artifacts without target app wrapping.
+- Built-in `llm capture` providers: `fake` (offline deterministic), `openai`, `anthropic`, and `google` (mock-friendly in tests, real-key capable in local runs).
+- `agent` command group with `providers` and `capture` subcommands for coding-agent session timeline capture.
+- Built-in `agent capture` adapters: `codex` and `claude-code` (fixture-runner backed for deterministic CI and local debugging).
 - Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
 - Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.
 - Stable Python API entrypoint (`import replaykit`) and tool decorator capture (`@replaykit.tool`) for library integrations.
@@ -119,8 +122,14 @@ replaykit bundle runs/a.rpk --redact default --out incident.bundle
 replaykit verify runs/a.rpk
 replaykit assert baseline.rpk
 replaykit live-demo --out runs/live-demo.rpk --provider fake --stream
-replaykit llm --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
-OPENAI_API_KEY=... replaykit llm --provider openai --model gpt-4o-mini --prompt "say hello" --out runs/llm-openai.rpk
+replaykit llm providers --json
+replaykit llm capture --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
+OPENAI_API_KEY=... replaykit llm capture --provider openai --model gpt-4o-mini --prompt "say hello" --out runs/llm-openai.rpk
+ANTHROPIC_API_KEY=... replaykit llm capture --provider anthropic --model claude-3-5-sonnet --prompt "say hello" --out runs/llm-anthropic.rpk
+GEMINI_API_KEY=... replaykit llm capture --provider google --model gemini-1.5-flash --prompt "say hello" --out runs/llm-google.rpk
+replaykit agent providers --json
+replaykit agent capture --agent codex --out runs/agent-codex.rpk -- python tests/fixtures/agents/fake_codex_agent.py
+replaykit agent capture --agent claude-code --out runs/agent-claude.rpk -- python tests/fixtures/agents/fake_claude_code_agent.py
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk
@@ -167,7 +176,8 @@ pyproject.toml        Package metadata and CLI entrypoint
 - Post-`M7` update: provider adapter contract and reference adapter (`docs/providers.md`).
 - Post-`M7` update: release polish (`replaykit --version`, install/signing docs).
 - Post-`M7` update: CI golden-path gating in GitHub Actions (record/replay/assert/diff + replay network guard).
-- Post-`M7` update: `replaykit llm` command with fake-provider and openai-provider capture paths.
+- Post-`M7` update: `replaykit llm` command group with `capture/providers` and built-in fake/openai/anthropic/google adapters.
+- Post-`M7` update: `replaykit agent` command group with fixture-backed codex/claude-code capture support.
 - Post-`M7` update: release-notes template for provider-capture + target-recording releases.
 
 Generate a deterministic capture artifact:
@@ -312,8 +322,19 @@ replaykit assert runs/baseline.rpk --candidate runs/candidate.rpk --nondetermini
 Capture provider-shaped LLM calls without wrapping a target app:
 
 ```bash
-replaykit llm --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
-OPENAI_API_KEY=... replaykit llm --provider openai --model gpt-4o-mini --prompt "say hello" --out runs/llm-openai.rpk
+replaykit llm providers --json
+replaykit llm capture --provider fake --model fake-chat --prompt "say hello" --stream --out runs/llm-capture.rpk
+OPENAI_API_KEY=... replaykit llm capture --provider openai --model gpt-4o-mini --prompt "say hello" --out runs/llm-openai.rpk
+ANTHROPIC_API_KEY=... replaykit llm capture --provider anthropic --model claude-3-5-sonnet --prompt "say hello" --out runs/llm-anthropic.rpk
+GEMINI_API_KEY=... replaykit llm capture --provider google --model gemini-1.5-flash --prompt "say hello" --out runs/llm-google.rpk
+```
+
+Capture coding-agent session timelines (fixture-runner examples, no external network required):
+
+```bash
+replaykit agent providers --json
+replaykit agent capture --agent codex --out runs/agent-codex.rpk -- python tests/fixtures/agents/fake_codex_agent.py
+replaykit agent capture --agent claude-code --out runs/agent-claude.rpk -- python tests/fixtures/agents/fake_claude_code_agent.py
 ```
 
 Launch the local UI:
