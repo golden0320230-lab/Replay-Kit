@@ -1,5 +1,6 @@
 import json
 from importlib.metadata import PackageNotFoundError, version as package_version
+import os
 from pathlib import Path
 import runpy
 import sys
@@ -64,7 +65,13 @@ from replaypack.performance import (
     run_benchmark_suite,
 )
 from replaypack.live_demo import build_live_demo_run
-from replaypack.llm_capture import build_fake_llm_run
+from replaypack.llm_capture import (
+    build_anthropic_llm_run,
+    build_fake_llm_run,
+    build_google_llm_run,
+    build_openai_llm_run,
+)
+from replaypack.providers import list_provider_adapter_keys
 from replaypack.snapshot import (
     SnapshotConfigError,
     assert_snapshot_artifact,
@@ -73,6 +80,8 @@ from replaypack.snapshot import (
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
+llm_app = typer.Typer(help="Capture provider request/response flows.")
+app.add_typer(llm_app, name="llm")
 
 
 @dataclass(slots=True)
@@ -84,6 +93,11 @@ class _OutputOptions:
 
 _OUTPUT_OPTIONS = _OutputOptions()
 _PYTHON_COMMAND_TOKENS = {"python", "python3"}
+_LLM_PROVIDER_DEFAULT_API_KEY_ENV = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +132,37 @@ def _load_redaction_policy(config_path: Path | None) -> RedactionPolicy | None:
         raise ArtifactError(f"redaction config not found: {config_path}") from error
     except RedactionPolicyConfigError as error:
         raise ArtifactError(str(error)) from error
+
+
+def _resolve_provider_api_key(
+    *,
+    provider: str,
+    explicit_api_key: str | None,
+    api_key_env: str | None,
+) -> tuple[str | None, str | None]:
+    normalized_provider = provider.strip().lower()
+    if normalized_provider == "fake":
+        return None, None
+
+    if explicit_api_key and explicit_api_key.strip():
+        env_name = (
+            api_key_env.strip()
+            if api_key_env and api_key_env.strip()
+            else _LLM_PROVIDER_DEFAULT_API_KEY_ENV.get(normalized_provider)
+        )
+        return explicit_api_key.strip(), env_name
+
+    env_name = (
+        api_key_env.strip()
+        if api_key_env and api_key_env.strip()
+        else _LLM_PROVIDER_DEFAULT_API_KEY_ENV.get(normalized_provider)
+    )
+    if not env_name:
+        return None, None
+    value = os.getenv(env_name)
+    if value and value.strip():
+        return value.strip(), env_name
+    return None, env_name
 
 
 @app.callback()
@@ -1243,8 +1288,213 @@ def live_demo(
         _echo(f"live-demo artifact: {out}")
 
 
-@app.command()
+def _llm_capture_command(
+    *,
+    out: Path,
+    provider: str,
+    model: str,
+    prompt: str,
+    stream: bool,
+    api_key: str | None,
+    api_key_env: str | None,
+    base_url: str,
+    timeout_seconds: float,
+    redaction_config: Path | None,
+    json_output: bool,
+) -> None:
+    normalized_provider = provider.strip().lower()
+    run_id = f"run-llm-{int(time.time() * 1000)}"
+
+    try:
+        redaction_policy = _load_redaction_policy(redaction_config)
+        resolved_api_key, resolved_env_name = _resolve_provider_api_key(
+            provider=normalized_provider,
+            explicit_api_key=api_key,
+            api_key_env=api_key_env,
+        )
+
+        if normalized_provider == "fake":
+            run = build_fake_llm_run(
+                model=model,
+                prompt=prompt,
+                stream=stream,
+                run_id=run_id,
+                redaction_policy=redaction_policy,
+            )
+        elif normalized_provider == "openai":
+            if not resolved_api_key:
+                env_hint = resolved_env_name or "OPENAI_API_KEY"
+                message = (
+                    "llm failed: missing API key for provider openai. "
+                    f"Set {env_hint} or pass --api-key/--api-key-env."
+                )
+                if json_output:
+                    _echo_json(
+                        {
+                            "status": "error",
+                            "exit_code": 3,
+                            "message": message,
+                            "artifact_path": None,
+                        }
+                    )
+                else:
+                    _echo(message, err=True)
+                raise typer.Exit(code=3)
+
+            run = build_openai_llm_run(
+                model=model,
+                prompt=prompt,
+                stream=stream,
+                run_id=run_id,
+                api_key=resolved_api_key,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+                redaction_policy=redaction_policy,
+            )
+        elif normalized_provider == "anthropic":
+            if not resolved_api_key:
+                env_hint = resolved_env_name or "ANTHROPIC_API_KEY"
+                message = (
+                    "llm failed: missing API key for provider anthropic. "
+                    f"Set {env_hint} or pass --api-key/--api-key-env."
+                )
+                if json_output:
+                    _echo_json(
+                        {
+                            "status": "error",
+                            "exit_code": 3,
+                            "message": message,
+                            "artifact_path": None,
+                        }
+                    )
+                else:
+                    _echo(message, err=True)
+                raise typer.Exit(code=3)
+
+            run = build_anthropic_llm_run(
+                model=model,
+                prompt=prompt,
+                stream=stream,
+                run_id=run_id,
+                api_key=resolved_api_key,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+                redaction_policy=redaction_policy,
+            )
+        elif normalized_provider == "google":
+            if not resolved_api_key:
+                env_hint = resolved_env_name or "GEMINI_API_KEY"
+                message = (
+                    "llm failed: missing API key for provider google. "
+                    f"Set {env_hint} or pass --api-key/--api-key-env."
+                )
+                if json_output:
+                    _echo_json(
+                        {
+                            "status": "error",
+                            "exit_code": 3,
+                            "message": message,
+                            "artifact_path": None,
+                        }
+                    )
+                else:
+                    _echo(message, err=True)
+                raise typer.Exit(code=3)
+
+            run = build_google_llm_run(
+                model=model,
+                prompt=prompt,
+                stream=stream,
+                run_id=run_id,
+                api_key=resolved_api_key,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+                redaction_policy=redaction_policy,
+            )
+        else:
+            message = (
+                f"llm failed: unsupported provider '{provider}'. "
+                "Expected fake, openai, anthropic, or google."
+            )
+            if json_output:
+                _echo_json(
+                    {
+                        "status": "error",
+                        "exit_code": 2,
+                        "message": message,
+                        "artifact_path": None,
+                    }
+                )
+            else:
+                _echo(message, err=True)
+            raise typer.Exit(code=2)
+
+        run.source = "llm.capture"
+        run.provider = normalized_provider
+        write_artifact(
+            run,
+            out,
+            metadata={
+                "mode": "llm",
+                "provider": normalized_provider,
+                "stream": stream,
+                "model": model,
+            },
+        )
+    except ArtifactError as error:
+        message = f"llm failed: {error}"
+        if json_output:
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": None,
+                }
+            )
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+    except typer.Exit:
+        raise
+    except Exception as error:  # pragma: no cover - defensive provider failure path
+        message = f"llm failed: {error}"
+        if json_output:
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": None,
+                }
+            )
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "llm capture succeeded",
+        "artifact_path": str(out),
+        "provider": normalized_provider,
+        "model": model,
+        "stream": stream,
+        "out": str(out),
+        "run_id": run.id,
+        "steps": len(run.steps),
+        "api_key_present": bool(resolved_api_key),
+        "api_key_env": resolved_env_name,
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(f"llm artifact: {out}")
+
+
+@llm_app.callback(invoke_without_command=True)
 def llm(
+    ctx: typer.Context,
     out: Path = typer.Option(
         Path("runs/llm-capture.rpk"),
         "--out",
@@ -1253,7 +1503,7 @@ def llm(
     provider: str = typer.Option(
         "fake",
         "--provider",
-        help="LLM provider backend. Supported: fake, openai.",
+        help="LLM provider backend. Supported: fake, openai, anthropic, google.",
     ),
     model: str = typer.Option(
         "fake-chat",
@@ -1273,8 +1523,12 @@ def llm(
     api_key: str | None = typer.Option(
         None,
         "--api-key",
-        envvar="OPENAI_API_KEY",
-        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
+        help="Optional provider API key override.",
+    ),
+    api_key_env: str | None = typer.Option(
+        None,
+        "--api-key-env",
+        help="Environment variable name used to resolve provider API key.",
     ),
     base_url: str = typer.Option(
         "https://api.openai.com",
@@ -1298,116 +1552,119 @@ def llm(
     ),
 ) -> None:
     """Capture provider request/response flows without target app wrapping."""
-    normalized_provider = provider.strip().lower()
-    run_id = f"run-llm-{int(time.time() * 1000)}"
+    if ctx.invoked_subcommand is not None:
+        return
+    _llm_capture_command(
+        out=out,
+        provider=provider,
+        model=model,
+        prompt=prompt,
+        stream=stream,
+        api_key=api_key,
+        api_key_env=api_key_env,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        redaction_config=redaction_config,
+        json_output=json_output,
+    )
 
-    try:
-        redaction_policy = _load_redaction_policy(redaction_config)
 
-        if normalized_provider == "fake":
-            run = build_fake_llm_run(
-                model=model,
-                prompt=prompt,
-                stream=stream,
-                run_id=run_id,
-            )
-        elif normalized_provider == "openai":
-            if not api_key or not api_key.strip():
-                message = (
-                    "llm failed: missing API key for provider openai. "
-                    "Set OPENAI_API_KEY or pass --api-key."
-                )
-                if json_output:
-                    _echo_json({"status": "error", "exit_code": 2, "message": message})
-                else:
-                    _echo(message, err=True)
-                raise typer.Exit(code=2)
-
-            import requests
-
-            base = base_url.rstrip("/")
-            payload = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": stream,
-            }
-
-            with capture_run(
-                run_id=run_id,
-                policy=InterceptionPolicy(capture_http_bodies=True),
-                redaction_policy=redaction_policy,
-            ) as capture_context:
-                with intercept_requests(context=capture_context):
-                    response = requests.post(
-                        f"{base}/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                        timeout=timeout_seconds,
-                        stream=stream,
-                    )
-                    response.raise_for_status()
-                    if stream:
-                        for _ in response.iter_lines():
-                            pass
-                    else:
-                        response.json()
-                run = capture_context.to_run()
-        else:
-            message = (
-                f"llm failed: unsupported provider '{provider}'. "
-                "Expected fake or openai."
-            )
-            if json_output:
-                _echo_json({"status": "error", "exit_code": 2, "message": message})
-            else:
-                _echo(message, err=True)
-            raise typer.Exit(code=2)
-
-        write_artifact(
-            run,
-            out,
-            metadata={
-                "mode": "llm",
-                "provider": normalized_provider,
-                "stream": stream,
-                "model": model,
-            },
-        )
-    except ArtifactError as error:
-        message = f"llm failed: {error}"
-        if json_output:
-            _echo_json({"status": "error", "exit_code": 1, "message": message})
-        else:
-            _echo(message, err=True)
-        raise typer.Exit(code=1) from error
-    except typer.Exit:
-        raise
-    except Exception as error:  # pragma: no cover - defensive provider failure path
-        message = f"llm failed: {error}"
-        if json_output:
-            _echo_json({"status": "error", "exit_code": 1, "message": message})
-        else:
-            _echo(message, err=True)
-        raise typer.Exit(code=1) from error
-
-    payload = {
-        "status": "ok",
-        "exit_code": 0,
-        "provider": normalized_provider,
-        "model": model,
-        "stream": stream,
-        "out": str(out),
-        "run_id": run.id,
-        "steps": len(run.steps),
-        "api_key_present": bool(api_key),
-    }
+@llm_app.command("providers")
+def llm_providers(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable provider listing output.",
+    ),
+) -> None:
+    """List supported LLM provider keys."""
+    providers = list(list_provider_adapter_keys())
     if json_output:
-        _echo_json(payload)
+        _echo_json(
+            {
+                "status": "ok",
+                "exit_code": 0,
+                "message": "supported llm providers",
+                "artifact_path": None,
+                "providers": providers,
+            }
+        )
     else:
-        _echo(f"llm artifact: {out}")
+        _echo("\n".join(providers), force=True)
+
+
+@llm_app.command("capture")
+def llm_capture(
+    out: Path = typer.Option(
+        Path("runs/llm-capture.rpk"),
+        "--out",
+        help="Output path for LLM capture artifact.",
+    ),
+    provider: str = typer.Option(
+        "fake",
+        "--provider",
+        help="LLM provider backend. Supported: fake, openai, anthropic, google.",
+    ),
+    model: str = typer.Option(
+        "fake-chat",
+        "--model",
+        help="Model identifier for capture payload.",
+    ),
+    prompt: str = typer.Option(
+        "say hello",
+        "--prompt",
+        help="Prompt text for provider request.",
+    ),
+    stream: bool = typer.Option(
+        False,
+        "--stream/--no-stream",
+        help="Capture stream response shape when enabled.",
+    ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        help="Optional provider API key override.",
+    ),
+    api_key_env: str | None = typer.Option(
+        None,
+        "--api-key-env",
+        help="Environment variable name used to resolve provider API key.",
+    ),
+    base_url: str = typer.Option(
+        "https://api.openai.com",
+        "--base-url",
+        help="Provider API base URL for --provider openai.",
+    ),
+    timeout_seconds: float = typer.Option(
+        30.0,
+        "--timeout-seconds",
+        help="HTTP timeout for provider calls.",
+    ),
+    redaction_config: Path | None = typer.Option(
+        None,
+        "--redaction-config",
+        help="Path to JSON redaction policy config.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable llm capture output.",
+    ),
+) -> None:
+    """Capture provider request/response flows without target app wrapping."""
+    _llm_capture_command(
+        out=out,
+        provider=provider,
+        model=model,
+        prompt=prompt,
+        stream=stream,
+        api_key=api_key,
+        api_key_env=api_key_env,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        redaction_config=redaction_config,
+        json_output=json_output,
+    )
 
 
 @app.command()

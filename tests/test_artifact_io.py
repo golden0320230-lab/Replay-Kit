@@ -9,6 +9,7 @@ from replaypack.artifact import (
     build_artifact_envelope,
     compute_artifact_checksum,
     read_artifact,
+    read_artifact_envelope,
     validate_artifact,
     write_artifact,
 )
@@ -55,8 +56,50 @@ def test_round_trip_write_and_read(sample_run: Run, tmp_path: Path) -> None:
     loaded = read_artifact(artifact_path)
 
     validate_artifact(envelope)
-    expected = canonicalize(sample_run.with_hashed_steps().to_dict())
+    expected_run = sample_run.with_hashed_steps()
+    expected_run.environment_fingerprint.pop("cwd", None)
+    expected = canonicalize(expected_run.to_dict())
     assert loaded.to_dict() == expected
+
+
+def test_writer_is_byte_stable_for_identical_run(sample_run: Run, tmp_path: Path) -> None:
+    first_path = tmp_path / "stable-1.rpk"
+    second_path = tmp_path / "stable-2.rpk"
+
+    write_artifact(sample_run, first_path)
+    write_artifact(sample_run, second_path)
+
+    assert first_path.read_bytes() == second_path.read_bytes()
+
+
+def test_writer_uses_safe_environment_subset(sample_run: Run, tmp_path: Path) -> None:
+    artifact_path = tmp_path / "safe-env.rpk"
+    write_artifact(sample_run, artifact_path)
+
+    envelope = read_artifact_envelope(artifact_path)
+    env = envelope["payload"]["run"]["environment_fingerprint"]
+    assert "cwd" not in env
+    assert env["os"] == "macOS"
+
+
+def test_run_source_provider_agent_round_trip(tmp_path: Path) -> None:
+    run = Run(
+        id="run-source-provider-agent-001",
+        timestamp="2026-02-23T01:00:00Z",
+        source="llm.capture",
+        provider="openai",
+        agent=None,
+        environment_fingerprint={"os": "linux"},
+        runtime_versions={"python": "3.12.0"},
+        steps=[],
+    )
+    artifact_path = tmp_path / "source-provider-agent.rpk"
+    write_artifact(run, artifact_path)
+
+    loaded = read_artifact(artifact_path)
+    assert loaded.source == "llm.capture"
+    assert loaded.provider == "openai"
+    assert loaded.agent is None
 
 
 def test_invalid_artifact_missing_required_field_fails(sample_run: Run) -> None:
