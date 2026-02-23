@@ -371,6 +371,11 @@ def listen_start(
         "--state-file",
         help="Path to listener state file.",
     ),
+    out: Path = typer.Option(
+        Path("runs/listener/listener-capture.rpk"),
+        "--out",
+        help="Artifact path for listener-captured provider/agent traffic.",
+    ),
     startup_timeout_seconds: float = typer.Option(
         5.0,
         "--startup-timeout-seconds",
@@ -397,6 +402,7 @@ def listen_start(
             "pid": _coerce_pid(running_state.get("pid")),
             "host": running_state.get("host"),
             "port": running_state.get("port"),
+            "artifact_out": running_state.get("artifact_path"),
         }
         if json_output:
             _echo_json(payload)
@@ -454,6 +460,8 @@ def listen_start(
         str(port),
         "--session-id",
         session_id,
+        "--out",
+        str(out),
     ]
 
     process = subprocess.Popen(
@@ -530,6 +538,7 @@ def listen_start(
         "pid": _coerce_pid(started_state.get("pid")),
         "host": started_state.get("host"),
         "port": started_state.get("port"),
+        "artifact_out": started_state.get("artifact_path"),
         "stale_cleanup": stale_cleanup,
     }
     if json_output:
@@ -538,7 +547,8 @@ def listen_start(
         _echo(
             "listener started: "
             f"session={payload['listener_session_id']} pid={payload['pid']} "
-            f"host={payload['host']} port={payload['port']}"
+            f"host={payload['host']} port={payload['port']} "
+            f"out={payload['artifact_out']}"
         )
 
 
@@ -700,6 +710,7 @@ def listen_status(
         "pid": _coerce_pid(running_state.get("pid")),
         "host": host,
         "port": port,
+        "artifact_out": running_state.get("artifact_path"),
         "healthy": health is not None,
         "health": health,
         "stale_cleanup": stale_cleanup,
