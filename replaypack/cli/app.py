@@ -476,8 +476,7 @@ def listen_start(
     process = subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
+        stderr=subprocess.DEVNULL,
     )
 
     deadline = time.time() + max(0.1, startup_timeout_seconds)
@@ -503,12 +502,7 @@ def listen_start(
         time.sleep(0.05)
 
     if process.poll() is not None and started_state is None:
-        stderr_output = ""
-        if process.stderr is not None:
-            stderr_output = process.stderr.read().strip()
         message = "listener start failed: daemon terminated during startup."
-        if stderr_output:
-            message = f"{message} {stderr_output}"
         payload = {
             "status": "error",
             "exit_code": 1,
