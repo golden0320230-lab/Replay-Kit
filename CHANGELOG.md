@@ -17,6 +17,14 @@ The format follows Keep a Changelog and Semantic Versioning.
   - `docs/release-notes-provider-capture-target-recording.md`.
   - `docs/RELEASES.md` now includes explicit command examples for publishing notes.
 
+### Changed
+
+- _None yet._
+
+### Fixed
+
+- _None yet._
+
 ## [0.1.0] - 2026-02-22
 
 ### Added
