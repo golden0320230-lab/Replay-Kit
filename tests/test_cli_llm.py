@@ -105,9 +105,10 @@ def test_cli_llm_openai_requires_api_key() -> None:
             "--provider",
             "openai",
         ],
+        env={"OPENAI_API_KEY": ""},
     )
 
-    assert result.exit_code == 2
+    assert result.exit_code == 3
     assert "OPENAI_API_KEY" in result.output
 
 
@@ -145,6 +146,30 @@ def test_cli_llm_capture_rejects_unknown_provider_json_contract() -> None:
     assert payload["exit_code"] == 2
     assert payload["artifact_path"] is None
     assert "unsupported provider" in payload["message"]
+
+
+def test_cli_llm_capture_missing_provider_key_returns_exit_code_3_json() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "google",
+            "--model",
+            "gemini-1.5-flash",
+            "--json",
+        ],
+        env={"GEMINI_API_KEY": ""},
+    )
+
+    assert result.exit_code == 3
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "error"
+    assert payload["exit_code"] == 3
+    assert payload["artifact_path"] is None
+    assert "GEMINI_API_KEY" in payload["message"]
 
 
 def test_cli_llm_capture_redacts_secret_patterns_in_artifact(tmp_path: Path) -> None:
@@ -364,6 +389,58 @@ def test_cli_llm_capture_google_uses_mock_transport_and_writes_provider_metadata
     assert [step.type for step in run.steps] == ["model.request", "model.response"]
     assert run.steps[0].metadata["provider"] == "google"
     assert run.steps[1].metadata["provider"] == "google"
+
+
+def test_cli_llm_capture_uses_api_key_env_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class _MockResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"id": "msg-mock-001", "content": [{"type": "text", "text": "Hello"}]}
+
+    def _mock_post(
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+        timeout: float,
+        stream: bool,
+    ) -> _MockResponse:
+        assert headers["x-api-key"] == "from-custom-env"
+        return _MockResponse()
+
+    monkeypatch.setattr(requests, "post", _mock_post)
+    out_path = tmp_path / "llm-anthropic-env-override.rpk"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-3-5-sonnet",
+            "--prompt",
+            "say hello",
+            "--out",
+            str(out_path),
+            "--json",
+            "--api-key-env",
+            "CUSTOM_ANTHROPIC_KEY",
+        ],
+        env={"CUSTOM_ANTHROPIC_KEY": "from-custom-env"},
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout.strip())
+    assert payload["api_key_env"] == "CUSTOM_ANTHROPIC_KEY"
 
 
 @pytest.mark.parametrize(
