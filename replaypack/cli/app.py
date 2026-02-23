@@ -352,6 +352,26 @@ def _load_running_listener_state(state_file: Path) -> tuple[dict[str, Any] | Non
     return None, True
 
 
+def _listener_startup_log_tail(
+    state_file: Path,
+    *,
+    max_lines: int = 6,
+) -> dict[str, Any]:
+    suffix = state_file.suffix or ".json"
+    startup_log = state_file.with_suffix(f"{suffix}.startup.log")
+    if not startup_log.exists():
+        return {"path": str(startup_log), "exists": False, "tail": []}
+    try:
+        lines = startup_log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"path": str(startup_log), "exists": True, "tail": ["<read_error>"]}
+    return {
+        "path": str(startup_log),
+        "exists": True,
+        "tail": lines[-max_lines:],
+    }
+
+
 def _check_port_available(host: str, port: int) -> tuple[bool, str | None]:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -508,6 +528,7 @@ def listen_start(
         message = "listener start failed: daemon terminated during startup."
         details: dict[str, Any] = {
             "state_file_exists": state_path.exists(),
+            "startup_log": _listener_startup_log_tail(state_path),
             "process_exit_code": process.poll(),
         }
         if isinstance(started_state, dict):
@@ -545,6 +566,7 @@ def listen_start(
                 pass
         details = {
             "state_file_exists": state_path.exists(),
+            "startup_log": _listener_startup_log_tail(state_path),
             "process_alive": process.poll() is None,
             "process_exit_code": process.poll(),
         }
