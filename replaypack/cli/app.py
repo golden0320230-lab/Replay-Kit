@@ -1,5 +1,6 @@
 import json
 from importlib.metadata import PackageNotFoundError, version as package_version
+import os
 from pathlib import Path
 import runpy
 import sys
@@ -92,6 +93,11 @@ class _OutputOptions:
 
 _OUTPUT_OPTIONS = _OutputOptions()
 _PYTHON_COMMAND_TOKENS = {"python", "python3"}
+_LLM_PROVIDER_DEFAULT_API_KEY_ENV = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +132,37 @@ def _load_redaction_policy(config_path: Path | None) -> RedactionPolicy | None:
         raise ArtifactError(f"redaction config not found: {config_path}") from error
     except RedactionPolicyConfigError as error:
         raise ArtifactError(str(error)) from error
+
+
+def _resolve_provider_api_key(
+    *,
+    provider: str,
+    explicit_api_key: str | None,
+    api_key_env: str | None,
+) -> tuple[str | None, str | None]:
+    normalized_provider = provider.strip().lower()
+    if normalized_provider == "fake":
+        return None, None
+
+    if explicit_api_key and explicit_api_key.strip():
+        env_name = (
+            api_key_env.strip()
+            if api_key_env and api_key_env.strip()
+            else _LLM_PROVIDER_DEFAULT_API_KEY_ENV.get(normalized_provider)
+        )
+        return explicit_api_key.strip(), env_name
+
+    env_name = (
+        api_key_env.strip()
+        if api_key_env and api_key_env.strip()
+        else _LLM_PROVIDER_DEFAULT_API_KEY_ENV.get(normalized_provider)
+    )
+    if not env_name:
+        return None, None
+    value = os.getenv(env_name)
+    if value and value.strip():
+        return value.strip(), env_name
+    return None, env_name
 
 
 @app.callback()
@@ -1259,6 +1296,7 @@ def _llm_capture_command(
     prompt: str,
     stream: bool,
     api_key: str | None,
+    api_key_env: str | None,
     base_url: str,
     timeout_seconds: float,
     redaction_config: Path | None,
@@ -1269,6 +1307,11 @@ def _llm_capture_command(
 
     try:
         redaction_policy = _load_redaction_policy(redaction_config)
+        resolved_api_key, resolved_env_name = _resolve_provider_api_key(
+            provider=normalized_provider,
+            explicit_api_key=api_key,
+            api_key_env=api_key_env,
+        )
 
         if normalized_provider == "fake":
             run = build_fake_llm_run(
@@ -1279,88 +1322,91 @@ def _llm_capture_command(
                 redaction_policy=redaction_policy,
             )
         elif normalized_provider == "openai":
-            if not api_key or not api_key.strip():
+            if not resolved_api_key:
+                env_hint = resolved_env_name or "OPENAI_API_KEY"
                 message = (
                     "llm failed: missing API key for provider openai. "
-                    "Set OPENAI_API_KEY or pass --api-key."
+                    f"Set {env_hint} or pass --api-key/--api-key-env."
                 )
                 if json_output:
                     _echo_json(
                         {
                             "status": "error",
-                            "exit_code": 2,
+                            "exit_code": 3,
                             "message": message,
                             "artifact_path": None,
                         }
                     )
                 else:
                     _echo(message, err=True)
-                raise typer.Exit(code=2)
+                raise typer.Exit(code=3)
 
             run = build_openai_llm_run(
                 model=model,
                 prompt=prompt,
                 stream=stream,
                 run_id=run_id,
-                api_key=api_key,
+                api_key=resolved_api_key,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 redaction_policy=redaction_policy,
             )
         elif normalized_provider == "anthropic":
-            if not api_key or not api_key.strip():
+            if not resolved_api_key:
+                env_hint = resolved_env_name or "ANTHROPIC_API_KEY"
                 message = (
                     "llm failed: missing API key for provider anthropic. "
-                    "Set ANTHROPIC_API_KEY or pass --api-key."
+                    f"Set {env_hint} or pass --api-key/--api-key-env."
                 )
                 if json_output:
                     _echo_json(
                         {
                             "status": "error",
-                            "exit_code": 2,
+                            "exit_code": 3,
                             "message": message,
                             "artifact_path": None,
                         }
                     )
                 else:
                     _echo(message, err=True)
-                raise typer.Exit(code=2)
+                raise typer.Exit(code=3)
 
             run = build_anthropic_llm_run(
                 model=model,
                 prompt=prompt,
                 stream=stream,
                 run_id=run_id,
-                api_key=api_key,
+                api_key=resolved_api_key,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 redaction_policy=redaction_policy,
             )
         elif normalized_provider == "google":
-            if not api_key or not api_key.strip():
+            if not resolved_api_key:
+                env_hint = resolved_env_name or "GEMINI_API_KEY"
                 message = (
                     "llm failed: missing API key for provider google. "
-                    "Set GEMINI_API_KEY or pass --api-key."
+                    f"Set {env_hint} or pass --api-key/--api-key-env."
                 )
                 if json_output:
                     _echo_json(
                         {
                             "status": "error",
-                            "exit_code": 2,
+                            "exit_code": 3,
                             "message": message,
                             "artifact_path": None,
                         }
                     )
                 else:
                     _echo(message, err=True)
-                raise typer.Exit(code=2)
+                raise typer.Exit(code=3)
 
             run = build_google_llm_run(
                 model=model,
                 prompt=prompt,
                 stream=stream,
                 run_id=run_id,
-                api_key=api_key,
+                api_key=resolved_api_key,
                 base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 redaction_policy=redaction_policy,
@@ -1437,7 +1483,8 @@ def _llm_capture_command(
         "out": str(out),
         "run_id": run.id,
         "steps": len(run.steps),
-        "api_key_present": bool(api_key),
+        "api_key_present": bool(resolved_api_key),
+        "api_key_env": resolved_env_name,
     }
     if json_output:
         _echo_json(payload)
@@ -1476,8 +1523,12 @@ def llm(
     api_key: str | None = typer.Option(
         None,
         "--api-key",
-        envvar="OPENAI_API_KEY",
-        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
+        help="Optional provider API key override.",
+    ),
+    api_key_env: str | None = typer.Option(
+        None,
+        "--api-key-env",
+        help="Environment variable name used to resolve provider API key.",
     ),
     base_url: str = typer.Option(
         "https://api.openai.com",
@@ -1510,6 +1561,7 @@ def llm(
         prompt=prompt,
         stream=stream,
         api_key=api_key,
+        api_key_env=api_key_env,
         base_url=base_url,
         timeout_seconds=timeout_seconds,
         redaction_config=redaction_config,
@@ -1571,8 +1623,12 @@ def llm_capture(
     api_key: str | None = typer.Option(
         None,
         "--api-key",
-        envvar="OPENAI_API_KEY",
-        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
+        help="Optional provider API key override.",
+    ),
+    api_key_env: str | None = typer.Option(
+        None,
+        "--api-key-env",
+        help="Environment variable name used to resolve provider API key.",
     ),
     base_url: str = typer.Option(
         "https://api.openai.com",
@@ -1603,6 +1659,7 @@ def llm_capture(
         prompt=prompt,
         stream=stream,
         api_key=api_key,
+        api_key_env=api_key_env,
         base_url=base_url,
         timeout_seconds=timeout_seconds,
         redaction_config=redaction_config,
