@@ -64,6 +64,7 @@ from replaypack.performance import (
     run_benchmark_suite,
 )
 from replaypack.live_demo import build_live_demo_run
+from replaypack.llm_capture import build_fake_llm_run
 from replaypack.snapshot import (
     SnapshotConfigError,
     assert_snapshot_artifact,
@@ -1255,25 +1256,25 @@ def llm(
         help="LLM provider backend. Supported: fake, openai.",
     ),
     model: str = typer.Option(
-        "gpt-4o-mini",
+        "fake-chat",
         "--model",
-        help="Model identifier passed to provider request payload.",
+        help="Model identifier for capture payload.",
     ),
     prompt: str = typer.Option(
-        "Say hello",
+        "say hello",
         "--prompt",
-        help="Prompt text sent to provider.",
+        help="Prompt text for provider request.",
     ),
     stream: bool = typer.Option(
         False,
         "--stream/--no-stream",
-        help="Capture provider stream responses when enabled.",
+        help="Capture stream response shape when enabled.",
     ),
     api_key: str | None = typer.Option(
         None,
         "--api-key",
         envvar="OPENAI_API_KEY",
-        help="Provider API key (OPENAI_API_KEY for --provider openai).",
+        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
     ),
     base_url: str = typer.Option(
         "https://api.openai.com",
@@ -1304,11 +1305,10 @@ def llm(
         redaction_policy = _load_redaction_policy(redaction_config)
 
         if normalized_provider == "fake":
-            run = build_live_demo_run(
-                provider="fake",
-                stream=stream,
+            run = build_fake_llm_run(
                 model=model,
                 prompt=prompt,
+                stream=stream,
                 run_id=run_id,
             )
         elif normalized_provider == "openai":
@@ -1402,6 +1402,7 @@ def llm(
         "out": str(out),
         "run_id": run.id,
         "steps": len(run.steps),
+        "api_key_present": bool(api_key),
     }
     if json_output:
         _echo_json(payload)
