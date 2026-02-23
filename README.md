@@ -64,6 +64,19 @@ replaykit replay runs/quickstart-demo.rpk --out runs/quickstart-replay.rpk
 replaykit diff runs/quickstart-demo.rpk runs/quickstart-replay.rpk --first-divergence
 ```
 
+## Target Record Mode (Runnable Now)
+
+Use target-record mode today without app code changes:
+
+```bash
+replaykit record --out runs/app.rpk -- python examples/apps/minimal_app.py
+```
+
+Default wrapper interception scope:
+
+- Captured automatically: `requests` and `httpx`.
+- Not captured automatically: provider SDK calls unless an adapter/hook is enabled.
+
 ## Installation
 
 Install from source (current workflow):
