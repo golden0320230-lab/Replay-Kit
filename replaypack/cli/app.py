@@ -725,6 +725,114 @@ def listen_status(
         )
 
 
+def _listener_env_payload(running_state: dict[str, Any]) -> dict[str, str]:
+    host = str(running_state.get("host", "127.0.0.1"))
+    port = int(running_state.get("port", 0) or 0)
+    listener_url = f"http://{host}:{port}"
+    return {
+        "REPLAYKIT_LISTENER_URL": listener_url,
+        "OPENAI_BASE_URL": listener_url,
+        "ANTHROPIC_BASE_URL": listener_url,
+        "GEMINI_BASE_URL": listener_url,
+        "REPLAYKIT_CODEX_EVENTS_URL": f"{listener_url}/agent/codex/events",
+        "REPLAYKIT_CLAUDE_CODE_EVENTS_URL": f"{listener_url}/agent/claude-code/events",
+    }
+
+
+@listen_app.command("env")
+def listen_env(
+    state_file: Path = typer.Option(
+        default_listener_state_path(),
+        "--state-file",
+        help="Path to listener state file.",
+    ),
+    shell: str = typer.Option(
+        "bash",
+        "--shell",
+        help="Output shell format: bash or powershell.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable environment payload.",
+    ),
+) -> None:
+    """Print shell exports for routing provider/agent traffic to listener."""
+    state_path = Path(state_file)
+    running_state, stale_cleanup = _load_running_listener_state(state_path)
+    if running_state is None:
+        message = "listen env failed: listener is not running."
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "message": message,
+            "artifact_path": None,
+            "state_file": str(state_path),
+            "stale_cleanup": stale_cleanup,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1)
+
+    env_payload = _listener_env_payload(running_state)
+    normalized_shell = shell.strip().lower()
+    if normalized_shell not in {"bash", "powershell"}:
+        message = f"listen env failed: unsupported --shell '{shell}'. Expected bash or powershell."
+        payload = {
+            "status": "error",
+            "exit_code": 2,
+            "message": message,
+            "artifact_path": None,
+            "state_file": str(state_path),
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    if json_output:
+        _echo_json(
+            {
+                "status": "ok",
+                "exit_code": 0,
+                "message": "listener routing environment",
+                "artifact_path": None,
+                "state_file": str(state_path),
+                "listener_session_id": running_state.get("listener_session_id"),
+                "shell": normalized_shell,
+                "env": env_payload,
+                "usage_note": "Exports contain routing URLs only and never API keys.",
+            }
+        )
+        return
+
+    if normalized_shell == "powershell":
+        lines = [
+            "# ReplayKit passive listener routing exports (no secrets)",
+            f"$env:REPLAYKIT_LISTENER_URL = '{env_payload['REPLAYKIT_LISTENER_URL']}'",
+            "$env:OPENAI_BASE_URL = $env:REPLAYKIT_LISTENER_URL",
+            "$env:ANTHROPIC_BASE_URL = $env:REPLAYKIT_LISTENER_URL",
+            "$env:GEMINI_BASE_URL = $env:REPLAYKIT_LISTENER_URL",
+            "$env:REPLAYKIT_CODEX_EVENTS_URL = $env:REPLAYKIT_LISTENER_URL + '/agent/codex/events'",
+            "$env:REPLAYKIT_CLAUDE_CODE_EVENTS_URL = $env:REPLAYKIT_LISTENER_URL + '/agent/claude-code/events'",
+        ]
+    else:
+        lines = [
+            "# ReplayKit passive listener routing exports (no secrets)",
+            f"export REPLAYKIT_LISTENER_URL='{env_payload['REPLAYKIT_LISTENER_URL']}'",
+            "export OPENAI_BASE_URL=\"$REPLAYKIT_LISTENER_URL\"",
+            "export ANTHROPIC_BASE_URL=\"$REPLAYKIT_LISTENER_URL\"",
+            "export GEMINI_BASE_URL=\"$REPLAYKIT_LISTENER_URL\"",
+            "export REPLAYKIT_CODEX_EVENTS_URL=\"$REPLAYKIT_LISTENER_URL/agent/codex/events\"",
+            "export REPLAYKIT_CLAUDE_CODE_EVENTS_URL=\"$REPLAYKIT_LISTENER_URL/agent/claude-code/events\"",
+        ]
+
+    _echo("\n".join(lines), force=True)
+
+
 @app.command(
     context_settings={
         "allow_extra_args": True,
