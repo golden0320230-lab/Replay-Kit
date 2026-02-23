@@ -1,4 +1,5 @@
 import json
+import socket
 from datetime import datetime
 from pathlib import Path
 
@@ -123,3 +124,74 @@ def test_listener_fixture_normalization_preserves_order_and_correlation(tmp_path
             if step.timestamp
         ]
         assert parsed_timestamps == sorted(parsed_timestamps)
+
+
+def test_listener_cli_stub_replay_offline_golden_assertions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = _capture_listener_fixture(tmp_path, "listener-cli-source")
+    runner = CliRunner()
+
+    replay_a = tmp_path / "listener-cli-replay-a.rpk"
+    replay_b = tmp_path / "listener-cli-replay-b.rpk"
+
+    # Stub replay should be fully offline; block outbound socket creation.
+    def _blocked_create_connection(*_args, **_kwargs):
+        raise OSError("network disabled for replay parity test")
+
+    monkeypatch.setattr(socket, "create_connection", _blocked_create_connection)
+
+    replay_one = runner.invoke(
+        app,
+        [
+            "replay",
+            str(source_path),
+            "--out",
+            str(replay_a),
+            "--seed",
+            "19",
+            "--fixed-clock",
+            "2026-02-23T00:00:00Z",
+        ],
+    )
+    assert replay_one.exit_code == 0, replay_one.output
+
+    replay_two = runner.invoke(
+        app,
+        [
+            "replay",
+            str(source_path),
+            "--out",
+            str(replay_b),
+            "--seed",
+            "19",
+            "--fixed-clock",
+            "2026-02-23T00:00:00Z",
+        ],
+    )
+    assert replay_two.exit_code == 0, replay_two.output
+
+    assert replay_a.read_bytes() == replay_b.read_bytes()
+
+    assertion = runner.invoke(
+        app,
+        [
+            "assert",
+            str(replay_a),
+            "--candidate",
+            str(replay_b),
+            "--json",
+        ],
+    )
+    assert assertion.exit_code == 0, assertion.output
+    payload = json.loads(assertion.stdout.strip())
+    assert payload["status"] == "pass"
+    assert payload["exit_code"] == 0
+    assert payload["first_divergence"] is None
+    assert payload["summary"] == {
+        "changed": 0,
+        "identical": 6,
+        "missing_left": 0,
+        "missing_right": 0,
+    }
