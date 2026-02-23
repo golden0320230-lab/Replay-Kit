@@ -130,6 +130,17 @@ Caveats:
 - Redaction is policy-driven and heuristic for unknown/custom formats.
 - Validate redaction coverage for proprietary payload schemas before sharing artifacts.
 
+## Streaming Capture Semantics
+
+For provider requests with `stream=true`, passive listener artifacts store:
+
+- `output.stream.enabled`: stream mode requested.
+- `output.stream.events`: ordered incremental `delta_text` events with 1-based indexes.
+- `output.stream.event_count`: number of captured incremental events.
+- `output.stream.completed`: true on successful stream completion, false when the stream fails/interrupted.
+
+`output.assembled_text` remains the deterministic concatenation of ordered stream deltas.
+
 ## Troubleshooting
 
 - `listener start failed: requested port is unavailable`:
