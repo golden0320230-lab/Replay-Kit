@@ -900,7 +900,15 @@ def verify(
     except (ArtifactError, FileNotFoundError, json.JSONDecodeError) as error:
         message = f"verify failed: {error}"
         if json_output:
-            _echo_json({"status": "error", "valid": False, "exit_code": 1, "message": message})
+            _echo_json(
+                {
+                    "status": "error",
+                    "valid": False,
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": str(artifact),
+                }
+            )
         else:
             _echo(message, err=True)
         raise typer.Exit(code=1) from error
@@ -911,9 +919,15 @@ def verify(
         require_signature=require_signature,
     )
 
-    payload = result.to_dict()
-    payload["artifact_path"] = str(artifact)
-    payload["exit_code"] = 0 if result.valid else 1
+    verification_payload = result.to_dict()
+    payload = {
+        **verification_payload,
+        "verification_status": verification_payload.get("status"),
+        "status": "ok" if result.valid else "error",
+        "message": result.message,
+        "artifact_path": str(artifact),
+        "exit_code": 0 if result.valid else 1,
+    }
 
     if json_output:
         _echo_json(payload)
