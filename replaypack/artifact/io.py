@@ -14,6 +14,18 @@ from replaypack.artifact.signing import sign_artifact_envelope
 from replaypack.core.canonical import canonical_json, canonicalize
 from replaypack.core.models import Run
 
+_SENSITIVE_ENVIRONMENT_KEYS = frozenset(
+    {
+        "cwd",
+        "pwd",
+        "home",
+        "user",
+        "username",
+        "host",
+        "hostname",
+    }
+)
+
 
 def compute_artifact_checksum(artifact_without_checksum: dict[str, Any]) -> str:
     payload = canonical_json(artifact_without_checksum)
@@ -31,6 +43,7 @@ def build_artifact_envelope(
     signing_key_id: str = "default",
 ) -> dict[str, Any]:
     run_hashed = run.with_hashed_steps()
+    safe_environment = _safe_environment_fingerprint(run_hashed.environment_fingerprint)
 
     envelope: dict[str, Any] = {
         "version": version,
@@ -40,7 +53,16 @@ def build_artifact_envelope(
             **(metadata or {}),
         },
         "payload": {
-            "run": run_hashed.to_dict(),
+            "run": Run(
+                id=run_hashed.id,
+                timestamp=run_hashed.timestamp,
+                environment_fingerprint=safe_environment,
+                runtime_versions=dict(run_hashed.runtime_versions),
+                source=run_hashed.source,
+                provider=run_hashed.provider,
+                agent=run_hashed.agent,
+                steps=list(run_hashed.steps),
+            ).to_dict(),
         },
     }
 
@@ -129,3 +151,13 @@ def read_artifact_envelope(path: str | Path) -> dict[str, Any]:
 def read_artifact(path: str | Path) -> Run:
     artifact = read_artifact_envelope(path)
     return Run.from_dict(artifact["payload"]["run"])
+
+
+def _safe_environment_fingerprint(environment: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in environment.items():
+        lowered = str(key).strip().lower()
+        if lowered in _SENSITIVE_ENVIRONMENT_KEYS:
+            continue
+        safe[str(key)] = value
+    return safe

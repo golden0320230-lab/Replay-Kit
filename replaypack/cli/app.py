@@ -73,6 +73,8 @@ from replaypack.snapshot import (
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
+llm_app = typer.Typer(help="Capture provider request/response flows.")
+app.add_typer(llm_app, name="llm")
 
 
 @dataclass(slots=True)
@@ -84,6 +86,7 @@ class _OutputOptions:
 
 _OUTPUT_OPTIONS = _OutputOptions()
 _PYTHON_COMMAND_TOKENS = {"python", "python3"}
+_LLM_PROVIDER_KEYS = ("fake", "openai", "anthropic", "google")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1243,8 +1246,167 @@ def live_demo(
         _echo(f"live-demo artifact: {out}")
 
 
-@app.command()
+def _llm_capture_command(
+    *,
+    out: Path,
+    provider: str,
+    model: str,
+    prompt: str,
+    stream: bool,
+    api_key: str | None,
+    base_url: str,
+    timeout_seconds: float,
+    redaction_config: Path | None,
+    json_output: bool,
+) -> None:
+    normalized_provider = provider.strip().lower()
+    run_id = f"run-llm-{int(time.time() * 1000)}"
+
+    try:
+        redaction_policy = _load_redaction_policy(redaction_config)
+
+        if normalized_provider == "fake":
+            run = build_fake_llm_run(
+                model=model,
+                prompt=prompt,
+                stream=stream,
+                run_id=run_id,
+                redaction_policy=redaction_policy,
+            )
+        elif normalized_provider == "openai":
+            if not api_key or not api_key.strip():
+                message = (
+                    "llm failed: missing API key for provider openai. "
+                    "Set OPENAI_API_KEY or pass --api-key."
+                )
+                if json_output:
+                    _echo_json(
+                        {
+                            "status": "error",
+                            "exit_code": 2,
+                            "message": message,
+                            "artifact_path": None,
+                        }
+                    )
+                else:
+                    _echo(message, err=True)
+                raise typer.Exit(code=2)
+
+            import requests
+
+            base = base_url.rstrip("/")
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": stream,
+            }
+
+            with capture_run(
+                run_id=run_id,
+                policy=InterceptionPolicy(capture_http_bodies=True),
+                redaction_policy=redaction_policy,
+            ) as capture_context:
+                with intercept_requests(context=capture_context):
+                    response = requests.post(
+                        f"{base}/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                        timeout=timeout_seconds,
+                        stream=stream,
+                    )
+                    response.raise_for_status()
+                    if stream:
+                        for _ in response.iter_lines():
+                            pass
+                    else:
+                        response.json()
+                run = capture_context.to_run()
+        else:
+            message = (
+                f"llm failed: unsupported provider '{provider}'. "
+                "Expected fake or openai."
+            )
+            if json_output:
+                _echo_json(
+                    {
+                        "status": "error",
+                        "exit_code": 2,
+                        "message": message,
+                        "artifact_path": None,
+                    }
+                )
+            else:
+                _echo(message, err=True)
+            raise typer.Exit(code=2)
+
+        run.source = "llm.capture"
+        run.provider = normalized_provider
+        write_artifact(
+            run,
+            out,
+            metadata={
+                "mode": "llm",
+                "provider": normalized_provider,
+                "stream": stream,
+                "model": model,
+            },
+        )
+    except ArtifactError as error:
+        message = f"llm failed: {error}"
+        if json_output:
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": None,
+                }
+            )
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+    except typer.Exit:
+        raise
+    except Exception as error:  # pragma: no cover - defensive provider failure path
+        message = f"llm failed: {error}"
+        if json_output:
+            _echo_json(
+                {
+                    "status": "error",
+                    "exit_code": 1,
+                    "message": message,
+                    "artifact_path": None,
+                }
+            )
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
+
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "llm capture succeeded",
+        "artifact_path": str(out),
+        "provider": normalized_provider,
+        "model": model,
+        "stream": stream,
+        "out": str(out),
+        "run_id": run.id,
+        "steps": len(run.steps),
+        "api_key_present": bool(api_key),
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(f"llm artifact: {out}")
+
+
+@llm_app.callback(invoke_without_command=True)
 def llm(
+    ctx: typer.Context,
     out: Path = typer.Option(
         Path("runs/llm-capture.rpk"),
         "--out",
@@ -1298,116 +1460,113 @@ def llm(
     ),
 ) -> None:
     """Capture provider request/response flows without target app wrapping."""
-    normalized_provider = provider.strip().lower()
-    run_id = f"run-llm-{int(time.time() * 1000)}"
+    if ctx.invoked_subcommand is not None:
+        return
+    _llm_capture_command(
+        out=out,
+        provider=provider,
+        model=model,
+        prompt=prompt,
+        stream=stream,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        redaction_config=redaction_config,
+        json_output=json_output,
+    )
 
-    try:
-        redaction_policy = _load_redaction_policy(redaction_config)
 
-        if normalized_provider == "fake":
-            run = build_fake_llm_run(
-                model=model,
-                prompt=prompt,
-                stream=stream,
-                run_id=run_id,
-            )
-        elif normalized_provider == "openai":
-            if not api_key or not api_key.strip():
-                message = (
-                    "llm failed: missing API key for provider openai. "
-                    "Set OPENAI_API_KEY or pass --api-key."
-                )
-                if json_output:
-                    _echo_json({"status": "error", "exit_code": 2, "message": message})
-                else:
-                    _echo(message, err=True)
-                raise typer.Exit(code=2)
-
-            import requests
-
-            base = base_url.rstrip("/")
-            payload = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": stream,
-            }
-
-            with capture_run(
-                run_id=run_id,
-                policy=InterceptionPolicy(capture_http_bodies=True),
-                redaction_policy=redaction_policy,
-            ) as capture_context:
-                with intercept_requests(context=capture_context):
-                    response = requests.post(
-                        f"{base}/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
-                        timeout=timeout_seconds,
-                        stream=stream,
-                    )
-                    response.raise_for_status()
-                    if stream:
-                        for _ in response.iter_lines():
-                            pass
-                    else:
-                        response.json()
-                run = capture_context.to_run()
-        else:
-            message = (
-                f"llm failed: unsupported provider '{provider}'. "
-                "Expected fake or openai."
-            )
-            if json_output:
-                _echo_json({"status": "error", "exit_code": 2, "message": message})
-            else:
-                _echo(message, err=True)
-            raise typer.Exit(code=2)
-
-        write_artifact(
-            run,
-            out,
-            metadata={
-                "mode": "llm",
-                "provider": normalized_provider,
-                "stream": stream,
-                "model": model,
-            },
-        )
-    except ArtifactError as error:
-        message = f"llm failed: {error}"
-        if json_output:
-            _echo_json({"status": "error", "exit_code": 1, "message": message})
-        else:
-            _echo(message, err=True)
-        raise typer.Exit(code=1) from error
-    except typer.Exit:
-        raise
-    except Exception as error:  # pragma: no cover - defensive provider failure path
-        message = f"llm failed: {error}"
-        if json_output:
-            _echo_json({"status": "error", "exit_code": 1, "message": message})
-        else:
-            _echo(message, err=True)
-        raise typer.Exit(code=1) from error
-
-    payload = {
-        "status": "ok",
-        "exit_code": 0,
-        "provider": normalized_provider,
-        "model": model,
-        "stream": stream,
-        "out": str(out),
-        "run_id": run.id,
-        "steps": len(run.steps),
-        "api_key_present": bool(api_key),
-    }
+@llm_app.command("providers")
+def llm_providers(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable provider listing output.",
+    ),
+) -> None:
+    """List supported LLM provider keys."""
+    providers = list(_LLM_PROVIDER_KEYS)
     if json_output:
-        _echo_json(payload)
+        _echo_json(
+            {
+                "status": "ok",
+                "exit_code": 0,
+                "message": "supported llm providers",
+                "artifact_path": None,
+                "providers": providers,
+            }
+        )
     else:
-        _echo(f"llm artifact: {out}")
+        _echo("\n".join(providers), force=True)
+
+
+@llm_app.command("capture")
+def llm_capture(
+    out: Path = typer.Option(
+        Path("runs/llm-capture.rpk"),
+        "--out",
+        help="Output path for LLM capture artifact.",
+    ),
+    provider: str = typer.Option(
+        "fake",
+        "--provider",
+        help="LLM provider backend. Supported: fake, openai.",
+    ),
+    model: str = typer.Option(
+        "fake-chat",
+        "--model",
+        help="Model identifier for capture payload.",
+    ),
+    prompt: str = typer.Option(
+        "say hello",
+        "--prompt",
+        help="Prompt text for provider request.",
+    ),
+    stream: bool = typer.Option(
+        False,
+        "--stream/--no-stream",
+        help="Capture stream response shape when enabled.",
+    ),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        envvar="OPENAI_API_KEY",
+        help="Optional provider API key (OPENAI_API_KEY for provider=openai).",
+    ),
+    base_url: str = typer.Option(
+        "https://api.openai.com",
+        "--base-url",
+        help="Provider API base URL for --provider openai.",
+    ),
+    timeout_seconds: float = typer.Option(
+        30.0,
+        "--timeout-seconds",
+        help="HTTP timeout for provider calls.",
+    ),
+    redaction_config: Path | None = typer.Option(
+        None,
+        "--redaction-config",
+        help="Path to JSON redaction policy config.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable llm capture output.",
+    ),
+) -> None:
+    """Capture provider request/response flows without target app wrapping."""
+    _llm_capture_command(
+        out=out,
+        provider=provider,
+        model=model,
+        prompt=prompt,
+        stream=stream,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        redaction_config=redaction_config,
+        json_output=json_output,
+    )
 
 
 @app.command()
