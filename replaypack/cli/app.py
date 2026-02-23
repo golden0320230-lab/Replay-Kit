@@ -489,10 +489,12 @@ def listen_start(
         if isinstance(started_state, dict):
             started_host = str(started_state.get("host", host))
             started_port = int(started_state.get("port", 0) or 0)
+            started_pid = _coerce_pid(started_state.get("pid"))
             if (
                 started_state.get("listener_session_id") == session_id
                 and started_port > 0
-                and _listener_health(started_host, started_port, timeout=0.25) is not None
+                and started_pid > 0
+                and is_pid_running(started_pid)
             ):
                 listener_ready = True
                 break
@@ -712,7 +714,9 @@ def listen_status(
 
     host = str(running_state.get("host", "127.0.0.1"))
     port = int(running_state.get("port", 0) or 0)
+    pid = _coerce_pid(running_state.get("pid"))
     health = _listener_health(host, port)
+    healthy = health is not None or (pid > 0 and is_pid_running(pid))
     payload = {
         "status": "ok",
         "exit_code": 0,
@@ -721,11 +725,11 @@ def listen_status(
         "running": True,
         "state_file": str(state_path),
         "listener_session_id": running_state.get("listener_session_id"),
-        "pid": _coerce_pid(running_state.get("pid")),
+        "pid": pid,
         "host": host,
         "port": port,
         "artifact_out": running_state.get("artifact_path"),
-        "healthy": health is not None,
+        "healthy": healthy,
         "health": health,
         "stale_cleanup": stale_cleanup,
     }
