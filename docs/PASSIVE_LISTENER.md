@@ -2,6 +2,9 @@
 
 ReplayKit passive mode runs as a local listener/interceptor so target apps and coding agents can run independently while ReplayKit captures canonical debugging artifacts.
 
+Passive contract details (provider matrix, streaming semantics, failure semantics):
+`docs/PASSIVE_LISTENER_ARCHITECTURE.md`
+
 ## What It Captures
 
 - Provider gateway traffic to listener paths:

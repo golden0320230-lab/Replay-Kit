@@ -21,6 +21,64 @@ Out of scope:
 - Hosted control plane.
 - Provider-side instrumentation not visible to the local process boundary.
 
+## Passive Capture Contract
+
+### Provider/Endpoint Support Matrix
+
+| Provider | Listener ingress path | Request shape | Response shape | Streaming contract | Contract tests |
+|---|---|---|---|---|---|
+| OpenAI-compatible | `/v1/chat/completions` | JSON object with `model` and `messages[]` | OpenAI-style completion payload | `stream=true` is captured and normalized; assembled output is persisted deterministically | `tests/test_listener_gateway.py`, `tests/test_listener_replay_parity.py` |
+| Anthropic-compatible | `/v1/messages` | JSON object with `model` and `messages[]` | Anthropic-style message payload | Stream semantics normalized to deterministic assembled output in `model.response` | `tests/test_listener_gateway.py`, `tests/test_listener_failure_isolation.py` |
+| Gemini-compatible | `/v1beta/models/<model>:generateContent` | JSON object with `contents[]` | Gemini-style candidate payload | Stream-like chunking is normalized into deterministic final output data | `tests/test_listener_gateway.py`, `tests/test_listener_replay_parity.py` |
+
+### Required Run and Step Metadata
+
+Passive capture must persist these deterministic fields:
+
+| Level | Required fields |
+|---|---|
+| Run | `source=listener`, `capture_mode=passive`, `listener_session_id`, listener process metadata, listener bind metadata |
+| `model.request` | `provider`, `path`, `request_id`, `correlation_id`, `capture_mode=passive` |
+| `model.response` | `provider`, `path`, `request_id`, `correlation_id`, `capture_mode=passive` |
+| `error.event` | `category`, actionable message, redacted details, `capture_mode=passive` |
+
+### Streaming Semantics
+
+For any provider/agent flow marked as streaming:
+
+1. Event order is preserved as observed by the listener.
+2. Correlation identifiers are stable across request/response boundaries.
+3. `model.response.output` captures normalized stream payload structure.
+4. `model.response.output.assembled_text` is deterministic for identical input traces.
+5. Replay parity compares assembled output, not transport timing.
+
+### Failure Semantics
+
+Default mode is best-effort (non-strict):
+
+1. Listener capture-path failures do not crash routed app traffic by default.
+2. Degraded fallback responses are returned when capture internals fail.
+3. An `error.event` step is emitted with redacted diagnostics.
+4. Health metrics increment (`capture_errors`, `dropped_events`, `degraded_responses`).
+5. Replay remains offline-capable for partially degraded artifacts.
+
+### Contract Checklist Mapped to Tests
+
+- [x] Listener lifecycle idempotency and stale state cleanup:
+  `tests/test_cli_listen.py`, `tests/test_listener_cleanup_regression.py`
+- [x] Provider ingress compatibility and response-shape expectations:
+  `tests/test_listener_gateway.py`
+- [x] Agent passive ingestion (Codex, Claude Code):
+  `tests/test_listener_agent_gateway.py`
+- [x] Failure isolation and degraded fallback behavior:
+  `tests/test_listener_failure_isolation.py`
+- [x] Redaction and secret-safe persistence:
+  `tests/test_listener_redaction.py`
+- [x] Deterministic replay parity for passive artifacts:
+  `tests/test_listener_replay_parity.py`
+- [x] CI golden-path passive listener flow:
+  `ci/passive_listener_golden_path.py`, `.github/workflows/ci.yml`
+
 ## High-Level Data Flow
 
 ```mermaid
