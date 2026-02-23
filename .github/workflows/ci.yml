@@ -85,6 +85,14 @@ jobs:
           python ci/passive_listener_golden_path.py
           echo "Passive listener golden path completed (runs/passive/*)."
 
+      - name: Golden Path Passive Artifact Replay Gate
+        run: |
+          python -c "from pathlib import Path; Path('runs/golden').mkdir(parents=True, exist_ok=True)"
+          python -m replaypack replay examples/runs/passive_listener_golden_path.rpk --out runs/golden/passive-golden-replay-a.rpk --seed 23 --fixed-clock 2026-02-23T00:00:00Z
+          python -m replaypack replay examples/runs/passive_listener_golden_path.rpk --out runs/golden/passive-golden-replay-b.rpk --seed 23 --fixed-clock 2026-02-23T00:00:00Z
+          python -m replaypack assert runs/golden/passive-golden-replay-a.rpk --candidate runs/golden/passive-golden-replay-b.rpk --json > runs/golden/passive-golden-assert.json
+          echo "Passive golden artifact replay gate completed (runs/golden/passive-golden-*)."
+
       - name: Passive Listener Network-Off Replay Guard
         run: |
           python ci/passive_listener_network_off_replay_guard.py
