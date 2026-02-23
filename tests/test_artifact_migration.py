@@ -5,12 +5,14 @@ import pytest
 
 from replaypack.artifact import (
     ArtifactMigrationError,
+    build_artifact_envelope,
     compute_artifact_checksum,
     migrate_artifact_envelope,
     migrate_artifact_file,
     read_artifact,
 )
 from replaypack.core.hashing import compute_step_hash
+from replaypack.core.models import Run, Step
 
 
 def _legacy_v0_9_artifact(*, valid_hash: bool = True) -> dict:
@@ -122,3 +124,39 @@ def test_migrate_recomputes_invalid_legacy_step_hash() -> None:
 def test_migrate_unsupported_source_version_fails() -> None:
     with pytest.raises(ArtifactMigrationError, match="unsupported source artifact version"):
         migrate_artifact_envelope(_unsupported_artifact())
+
+
+def test_migrate_current_v1_preserves_listener_metadata() -> None:
+    source_run = Run(
+        id="run-listener-migrate-001",
+        timestamp="2026-02-23T04:00:00Z",
+        source="listener",
+        provider="openai",
+        agent="codex",
+        capture_mode="passive",
+        listener_session_id="listener-session-abc",
+        listener_process={"pid": 4567, "executable": "/usr/bin/python3"},
+        listener_bind={"host": "127.0.0.1", "port": 8383},
+        environment_fingerprint={"os": "linux"},
+        runtime_versions={"python": "3.12.0"},
+        steps=[
+            Step(
+                id="step-001",
+                type="model.request",
+                input={"prompt": "hello"},
+                output={"status": "sent"},
+                metadata={"provider": "openai"},
+            )
+        ],
+    )
+    envelope = build_artifact_envelope(source_run, version="1.0")
+
+    migrated, summary = migrate_artifact_envelope(envelope, target_version="1.0")
+    run_payload = migrated["payload"]["run"]
+
+    assert summary.status == "already_current"
+    assert run_payload["source"] == "listener"
+    assert run_payload["capture_mode"] == "passive"
+    assert run_payload["listener_session_id"] == "listener-session-abc"
+    assert run_payload["listener_process"]["pid"] == 4567
+    assert run_payload["listener_bind"]["port"] == 8383

@@ -61,6 +61,18 @@ def build_artifact_envelope(
                 source=run_hashed.source,
                 provider=run_hashed.provider,
                 agent=run_hashed.agent,
+                capture_mode=run_hashed.capture_mode,
+                listener_session_id=run_hashed.listener_session_id,
+                listener_process=(
+                    dict(run_hashed.listener_process)
+                    if run_hashed.listener_process is not None
+                    else None
+                ),
+                listener_bind=(
+                    dict(run_hashed.listener_bind)
+                    if run_hashed.listener_bind is not None
+                    else None
+                ),
                 steps=list(run_hashed.steps),
             ).to_dict(),
         },

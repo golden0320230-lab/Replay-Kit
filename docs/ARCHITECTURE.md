@@ -190,3 +190,9 @@ Supported step types:
 4. O(n) diff and first divergence
 5. CLI workflow hardening
 6. Local UI implementation
+
+## Passive Listener Expansion
+
+Passive listener/interceptor architecture for out-of-process capture is defined in:
+
+- `docs/PASSIVE_LISTENER_ARCHITECTURE.md`

@@ -58,6 +58,13 @@ _FALLBACK_ARTIFACT_SCHEMA_V1: dict[str, Any] = {
                     "properties": {
                         "id": {"type": "string"},
                         "timestamp": {"type": "string"},
+                        "source": {"type": "string"},
+                        "provider": {"type": "string"},
+                        "agent": {"type": "string"},
+                        "capture_mode": {"type": "string"},
+                        "listener_session_id": {"type": "string"},
+                        "listener_process": {"type": "object"},
+                        "listener_bind": {"type": "object"},
                         "environment_fingerprint": {"type": "object"},
                         "runtime_versions": {"type": "object"},
                         "steps": {
