@@ -3,6 +3,9 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 import os
 from pathlib import Path
 import runpy
+import signal
+import socket
+import subprocess
 import sys
 import time
 import traceback
@@ -10,6 +13,8 @@ import webbrowser
 from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Any
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 import typer
 
@@ -73,6 +78,12 @@ from replaypack.llm_capture import (
     build_google_llm_run,
     build_openai_llm_run,
 )
+from replaypack.listener_state import (
+    default_listener_state_path,
+    is_pid_running,
+    load_listener_state,
+    remove_listener_state,
+)
 from replaypack.providers import list_provider_adapter_keys
 from replaypack.snapshot import (
     SnapshotConfigError,
@@ -84,8 +95,10 @@ from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 app = typer.Typer(help="ReplayKit CLI")
 llm_app = typer.Typer(help="Capture provider request/response flows.")
 agent_app = typer.Typer(help="Capture coding-agent sessions.")
+listen_app = typer.Typer(help="Passive listener daemon lifecycle commands.")
 app.add_typer(llm_app, name="llm")
 app.add_typer(agent_app, name="agent")
+app.add_typer(listen_app, name="listen")
 
 
 @dataclass(slots=True)
@@ -296,6 +309,409 @@ def _run_record_target(invocation: _RecordTargetInvocation) -> int:
         return 1
     finally:
         sys.argv = previous_argv
+
+
+def _coerce_pid(value: Any) -> int:
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return pid if pid > 0 else 0
+
+
+def _listener_health(host: str, port: int, *, timeout: float = 0.5) -> dict[str, Any] | None:
+    url = f"http://{host}:{port}/health"
+    request = urllib_request.Request(url, method="GET")
+    try:
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            if isinstance(payload, dict):
+                return payload
+    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def _load_running_listener_state(state_file: Path) -> tuple[dict[str, Any] | None, bool]:
+    raw_state = load_listener_state(state_file)
+    if raw_state is None:
+        return None, False
+    pid = _coerce_pid(raw_state.get("pid"))
+    if pid and is_pid_running(pid):
+        return raw_state, False
+    remove_listener_state(state_file)
+    return None, True
+
+
+def _check_port_available(host: str, port: int) -> tuple[bool, str | None]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+    except OSError as error:
+        return False, str(error)
+    finally:
+        sock.close()
+    return True, None
+
+
+@listen_app.command("start")
+def listen_start(
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Listener bind host.",
+    ),
+    port: int = typer.Option(
+        0,
+        "--port",
+        help="Listener bind port (0 chooses a free port).",
+    ),
+    state_file: Path = typer.Option(
+        default_listener_state_path(),
+        "--state-file",
+        help="Path to listener state file.",
+    ),
+    startup_timeout_seconds: float = typer.Option(
+        5.0,
+        "--startup-timeout-seconds",
+        help="Max time to wait for daemon startup.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable listener status.",
+    ),
+) -> None:
+    """Start passive listener daemon."""
+    state_path = Path(state_file)
+    running_state, stale_cleanup = _load_running_listener_state(state_path)
+    if running_state is not None:
+        message = "listener start failed: listener is already running."
+        payload = {
+            "status": "error",
+            "exit_code": 2,
+            "message": message,
+            "artifact_path": None,
+            "state_file": str(state_path),
+            "listener_session_id": running_state.get("listener_session_id"),
+            "pid": _coerce_pid(running_state.get("pid")),
+            "host": running_state.get("host"),
+            "port": running_state.get("port"),
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    if not (0 <= port <= 65535):
+        message = "listener start failed: --port must be between 0 and 65535."
+        payload = {
+            "status": "error",
+            "exit_code": 2,
+            "message": message,
+            "artifact_path": None,
+            "state_file": str(state_path),
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    if port != 0:
+        available, error_message = _check_port_available(host, port)
+        if not available:
+            message = (
+                "listener start failed: requested port is unavailable: "
+                f"{error_message or 'bind failed'}"
+            )
+            payload = {
+                "status": "error",
+                "exit_code": 2,
+                "message": message,
+                "artifact_path": None,
+                "state_file": str(state_path),
+                "host": host,
+                "port": port,
+            }
+            if json_output:
+                _echo_json(payload)
+            else:
+                _echo(message, err=True)
+            raise typer.Exit(code=2)
+
+    session_id = f"listener-{int(time.time() * 1000)}"
+    command = [
+        sys.executable,
+        "-m",
+        "replaypack.listener_daemon",
+        "--state-file",
+        str(state_path),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--session-id",
+        session_id,
+    ]
+
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+    deadline = time.time() + max(0.1, startup_timeout_seconds)
+    started_state: dict[str, Any] | None = None
+
+    while time.time() < deadline:
+        started_state = load_listener_state(state_path)
+        if (
+            isinstance(started_state, dict)
+            and started_state.get("listener_session_id") == session_id
+            and _coerce_pid(started_state.get("pid")) == process.pid
+        ):
+            break
+        if process.poll() is not None:
+            break
+        time.sleep(0.05)
+
+    if process.poll() is not None and started_state is None:
+        stderr_output = ""
+        if process.stderr is not None:
+            stderr_output = process.stderr.read().strip()
+        message = "listener start failed: daemon terminated during startup."
+        if stderr_output:
+            message = f"{message} {stderr_output}"
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "message": message,
+            "artifact_path": None,
+            "state_file": str(state_path),
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1)
+
+    started_state, _ = _load_running_listener_state(state_path)
+    if started_state is None:
+        if process.poll() is None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        message = "listener start failed: startup timed out."
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "message": message,
+            "artifact_path": None,
+            "state_file": str(state_path),
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1)
+
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "listener started",
+        "artifact_path": None,
+        "state_file": str(state_path),
+        "listener_session_id": started_state.get("listener_session_id"),
+        "pid": _coerce_pid(started_state.get("pid")),
+        "host": started_state.get("host"),
+        "port": started_state.get("port"),
+        "stale_cleanup": stale_cleanup,
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(
+            "listener started: "
+            f"session={payload['listener_session_id']} pid={payload['pid']} "
+            f"host={payload['host']} port={payload['port']}"
+        )
+
+
+@listen_app.command("stop")
+def listen_stop(
+    state_file: Path = typer.Option(
+        default_listener_state_path(),
+        "--state-file",
+        help="Path to listener state file.",
+    ),
+    shutdown_timeout_seconds: float = typer.Option(
+        5.0,
+        "--shutdown-timeout-seconds",
+        help="Max time to wait for listener shutdown.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable listener status.",
+    ),
+) -> None:
+    """Stop passive listener daemon."""
+    state_path = Path(state_file)
+    raw_state = load_listener_state(state_path)
+    if raw_state is None:
+        payload = {
+            "status": "ok",
+            "exit_code": 0,
+            "message": "listener already stopped",
+            "artifact_path": None,
+            "state_file": str(state_path),
+            "stale_cleanup": False,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(payload["message"])
+        return
+
+    pid = _coerce_pid(raw_state.get("pid"))
+    host = str(raw_state.get("host", "127.0.0.1"))
+    port = int(raw_state.get("port", 0) or 0)
+    session_id = raw_state.get("listener_session_id")
+
+    if pid <= 0 or not is_pid_running(pid):
+        remove_listener_state(state_path)
+        payload = {
+            "status": "ok",
+            "exit_code": 0,
+            "message": "listener already stopped (stale state cleaned)",
+            "artifact_path": None,
+            "state_file": str(state_path),
+            "listener_session_id": session_id,
+            "stale_cleanup": True,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(payload["message"])
+        return
+
+    request = urllib_request.Request(
+        f"http://{host}:{port}/shutdown",
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(request, timeout=1.0):
+            pass
+    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    deadline = time.time() + max(0.1, shutdown_timeout_seconds)
+    while time.time() < deadline:
+        if not is_pid_running(pid):
+            break
+        time.sleep(0.05)
+
+    if is_pid_running(pid):
+        message = "listener stop failed: timeout waiting for daemon exit."
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "message": message,
+            "artifact_path": None,
+            "state_file": str(state_path),
+            "listener_session_id": session_id,
+            "pid": pid,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1)
+
+    remove_listener_state(state_path)
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "listener stopped",
+        "artifact_path": None,
+        "state_file": str(state_path),
+        "listener_session_id": session_id,
+        "pid": pid,
+        "stale_cleanup": False,
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(payload["message"])
+
+
+@listen_app.command("status")
+def listen_status(
+    state_file: Path = typer.Option(
+        default_listener_state_path(),
+        "--state-file",
+        help="Path to listener state file.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable listener status.",
+    ),
+) -> None:
+    """Inspect passive listener daemon status."""
+    state_path = Path(state_file)
+    running_state, stale_cleanup = _load_running_listener_state(state_path)
+
+    if running_state is None:
+        payload = {
+            "status": "ok",
+            "exit_code": 0,
+            "message": "listener is stopped",
+            "artifact_path": None,
+            "running": False,
+            "state_file": str(state_path),
+            "stale_cleanup": stale_cleanup,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(payload["message"])
+        return
+
+    host = str(running_state.get("host", "127.0.0.1"))
+    port = int(running_state.get("port", 0) or 0)
+    health = _listener_health(host, port)
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "listener is running",
+        "artifact_path": None,
+        "running": True,
+        "state_file": str(state_path),
+        "listener_session_id": running_state.get("listener_session_id"),
+        "pid": _coerce_pid(running_state.get("pid")),
+        "host": host,
+        "port": port,
+        "healthy": health is not None,
+        "health": health,
+        "stale_cleanup": stale_cleanup,
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(
+            "listener is running: "
+            f"session={payload['listener_session_id']} pid={payload['pid']} "
+            f"host={host} port={port}"
+        )
 
 
 @app.command(

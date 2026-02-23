@@ -78,6 +78,10 @@ class Run:
     source: str | None = None
     provider: str | None = None
     agent: str | None = None
+    capture_mode: str | None = None
+    listener_session_id: str | None = None
+    listener_process: dict[str, Any] | None = None
+    listener_bind: dict[str, Any] | None = None
     steps: list[Step] = field(default_factory=list)
 
     def with_hashed_steps(self) -> "Run":
@@ -87,6 +91,10 @@ class Run:
             source=self.source,
             provider=self.provider,
             agent=self.agent,
+            capture_mode=self.capture_mode,
+            listener_session_id=self.listener_session_id,
+            listener_process=_copy_optional_dict(self.listener_process),
+            listener_bind=_copy_optional_dict(self.listener_bind),
             environment_fingerprint=dict(self.environment_fingerprint),
             runtime_versions=dict(self.runtime_versions),
             steps=[step.with_hash() for step in self.steps],
@@ -106,6 +114,14 @@ class Run:
             payload["provider"] = self.provider
         if self.agent is not None:
             payload["agent"] = self.agent
+        if self.capture_mode is not None:
+            payload["capture_mode"] = self.capture_mode
+        if self.listener_session_id is not None:
+            payload["listener_session_id"] = self.listener_session_id
+        if self.listener_process is not None:
+            payload["listener_process"] = dict(self.listener_process)
+        if self.listener_bind is not None:
+            payload["listener_bind"] = dict(self.listener_bind)
         return payload
 
     @classmethod
@@ -116,7 +132,23 @@ class Run:
             source=raw.get("source"),
             provider=raw.get("provider"),
             agent=raw.get("agent"),
+            capture_mode=raw.get("capture_mode"),
+            listener_session_id=raw.get("listener_session_id"),
+            listener_process=_optional_dict(raw.get("listener_process")),
+            listener_bind=_optional_dict(raw.get("listener_bind")),
             environment_fingerprint=dict(raw.get("environment_fingerprint", {})),
             runtime_versions=dict(raw.get("runtime_versions", {})),
             steps=[Step.from_dict(step) for step in raw.get("steps", [])],
         )
+
+
+def _optional_dict(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return dict(value)
+
+
+def _copy_optional_dict(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return dict(value)

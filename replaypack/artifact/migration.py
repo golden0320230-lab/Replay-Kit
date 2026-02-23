@@ -208,6 +208,13 @@ def _run_from_v1_envelope(source_envelope: dict[str, Any]) -> tuple[Run, dict[st
     run = Run(
         id=str(run_raw["id"]),
         timestamp=str(run_raw["timestamp"]),
+        source=_optional_string(run_raw.get("source")),
+        provider=_optional_string(run_raw.get("provider")),
+        agent=_optional_string(run_raw.get("agent")),
+        capture_mode=_optional_string(run_raw.get("capture_mode")),
+        listener_session_id=_optional_string(run_raw.get("listener_session_id")),
+        listener_process=_optional_dict(run_raw.get("listener_process")),
+        listener_bind=_optional_dict(run_raw.get("listener_bind")),
         environment_fingerprint=dict(run_raw.get("environment_fingerprint", {})),
         runtime_versions=dict(run_raw.get("runtime_versions", {})),
         steps=steps,
@@ -274,3 +281,18 @@ def _normalize_optional_hash(value: Any) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return str(value)
+
+
+def _optional_dict(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return dict(value)
