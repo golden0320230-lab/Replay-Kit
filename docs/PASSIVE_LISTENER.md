@@ -71,6 +71,23 @@ replaykit assert runs/passive/capture.rpk --candidate runs/passive/capture.rpk -
 replaykit replay runs/passive/capture.rpk --out runs/passive/replay.rpk --seed 19 --fixed-clock 2026-02-23T00:00:00Z
 ```
 
+## Optional Upstream Pass-Through
+
+By default, listener gateway returns deterministic provider-shaped synthetic responses. For live provider pass-through, set upstream base URLs before `listen start`:
+
+```bash
+export REPLAYKIT_OPENAI_UPSTREAM_URL="https://api.openai.com"
+export REPLAYKIT_ANTHROPIC_UPSTREAM_URL="https://api.anthropic.com"
+export REPLAYKIT_GEMINI_UPSTREAM_URL="https://generativelanguage.googleapis.com"
+export REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS="5"
+```
+
+Behavior:
+
+- Successful upstream calls pass through status code and JSON body unchanged.
+- Upstream non-2xx responses are passed through with provider response shape preserved.
+- Upstream timeout/transport errors return `502` with `listener_gateway_error` payload and are captured in artifact steps.
+
 ## Health and Failure Isolation
 
 `listen status --json` includes `health.metrics`:
