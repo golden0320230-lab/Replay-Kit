@@ -67,6 +67,7 @@ from replaypack.live_demo import build_live_demo_run
 from replaypack.llm_capture import (
     build_anthropic_llm_run,
     build_fake_llm_run,
+    build_google_llm_run,
     build_openai_llm_run,
 )
 from replaypack.providers import list_provider_adapter_keys
@@ -1335,10 +1336,39 @@ def _llm_capture_command(
                 timeout_seconds=timeout_seconds,
                 redaction_policy=redaction_policy,
             )
+        elif normalized_provider == "google":
+            if not api_key or not api_key.strip():
+                message = (
+                    "llm failed: missing API key for provider google. "
+                    "Set GEMINI_API_KEY or pass --api-key."
+                )
+                if json_output:
+                    _echo_json(
+                        {
+                            "status": "error",
+                            "exit_code": 2,
+                            "message": message,
+                            "artifact_path": None,
+                        }
+                    )
+                else:
+                    _echo(message, err=True)
+                raise typer.Exit(code=2)
+
+            run = build_google_llm_run(
+                model=model,
+                prompt=prompt,
+                stream=stream,
+                run_id=run_id,
+                api_key=api_key,
+                base_url=base_url,
+                timeout_seconds=timeout_seconds,
+                redaction_policy=redaction_policy,
+            )
         else:
             message = (
                 f"llm failed: unsupported provider '{provider}'. "
-                "Expected fake, openai, or anthropic."
+                "Expected fake, openai, anthropic, or google."
             )
             if json_output:
                 _echo_json(
@@ -1426,7 +1456,7 @@ def llm(
     provider: str = typer.Option(
         "fake",
         "--provider",
-        help="LLM provider backend. Supported: fake, openai, anthropic.",
+        help="LLM provider backend. Supported: fake, openai, anthropic, google.",
     ),
     model: str = typer.Option(
         "fake-chat",
@@ -1521,7 +1551,7 @@ def llm_capture(
     provider: str = typer.Option(
         "fake",
         "--provider",
-        help="LLM provider backend. Supported: fake, openai, anthropic.",
+        help="LLM provider backend. Supported: fake, openai, anthropic, google.",
     ),
     model: str = typer.Option(
         "fake-chat",
