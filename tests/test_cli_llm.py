@@ -294,3 +294,72 @@ def test_cli_llm_capture_anthropic_uses_mock_transport_and_writes_provider_metad
     assert [step.type for step in run.steps] == ["model.request", "model.response"]
     assert run.steps[0].metadata["provider"] == "anthropic"
     assert run.steps[1].metadata["provider"] == "anthropic"
+
+
+def test_cli_llm_capture_google_uses_mock_transport_and_writes_provider_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class _MockResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": "Hello"}],
+                        }
+                    }
+                ]
+            }
+
+    def _mock_post(
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, object],
+        timeout: float,
+        stream: bool,
+    ) -> _MockResponse:
+        assert ":generateContent" in url
+        assert headers["x-goog-api-key"] == "test-google-key"
+        assert timeout == 30.0
+        assert stream is False
+        return _MockResponse()
+
+    monkeypatch.setattr(requests, "post", _mock_post)
+    out_path = tmp_path / "llm-google-mock.rpk"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "llm",
+            "capture",
+            "--provider",
+            "google",
+            "--model",
+            "gemini-1.5-flash",
+            "--prompt",
+            "say hello",
+            "--out",
+            str(out_path),
+            "--json",
+            "--api-key",
+            "test-google-key",
+            "--base-url",
+            "https://generativelanguage.googleapis.com",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout.strip())
+    assert payload["status"] == "ok"
+    assert payload["provider"] == "google"
+    run = read_artifact(out_path)
+    assert [step.type for step in run.steps] == ["model.request", "model.response"]
+    assert run.steps[0].metadata["provider"] == "google"
+    assert run.steps[1].metadata["provider"] == "google"
