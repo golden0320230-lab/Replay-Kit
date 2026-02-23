@@ -40,6 +40,7 @@ def test_e2e_record_replay_assert_golden_path(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(socket.socket, "connect", _blocked_socket_connect, raising=True)
 
     replay_hashes: set[tuple[str | None, ...]] = set()
+    replay_artifacts: list[Path] = []
     for index in range(10):
         replay_artifact = tmp_path / f"replay-{index}.rpk"
         replay_result = runner.invoke(
@@ -56,7 +57,9 @@ def test_e2e_record_replay_assert_golden_path(tmp_path: Path, monkeypatch) -> No
             ],
         )
         assert replay_result.exit_code == 0, replay_result.output
+        replay_artifacts.append(replay_artifact)
         replay_run = read_artifact(replay_artifact)
+        assert replay_run.runtime_versions.get("replay_mode") == "stub"
         replay_hashes.add(tuple(step.hash for step in replay_run.steps))
 
     assert len(replay_hashes) == 1
@@ -66,9 +69,9 @@ def test_e2e_record_replay_assert_golden_path(tmp_path: Path, monkeypatch) -> No
         app,
         [
             "assert",
-            str(source_artifact),
+            str(replay_artifacts[0]),
             "--candidate",
-            str(source_artifact),
+            str(replay_artifacts[1]),
             "--json",
         ],
     )
