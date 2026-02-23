@@ -322,12 +322,21 @@ def _coerce_pid(value: Any) -> int:
 def _listener_health(host: str, port: int, *, timeout: float = 0.5) -> dict[str, Any] | None:
     url = f"http://{host}:{port}/health"
     request = urllib_request.Request(url, method="GET")
+    # Listener probes must bypass proxy configuration so localhost health checks
+    # remain reliable on CI runners with proxy env vars set.
+    opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
     try:
-        with urllib_request.urlopen(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
             if isinstance(payload, dict):
                 return payload
-    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, json.JSONDecodeError):
+    except (
+        urllib_error.URLError,
+        urllib_error.HTTPError,
+        TimeoutError,
+        OSError,
+        json.JSONDecodeError,
+    ):
         return None
     return None
 
@@ -617,10 +626,11 @@ def listen_stop(
         f"http://{host}:{port}/shutdown",
         method="POST",
     )
+    opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
     try:
-        with urllib_request.urlopen(request, timeout=1.0):
+        with opener.open(request, timeout=1.0):
             pass
-    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError):
+    except (urllib_error.URLError, urllib_error.HTTPError, TimeoutError, OSError):
         if os.name != "nt" and pid != os.getpid():
             try:
                 os.kill(pid, signal.SIGTERM)
