@@ -45,9 +45,10 @@ def remove_listener_state(path: str | Path) -> None:
 def is_pid_running(pid: int) -> bool:
     if pid <= 0:
         return False
-    if hasattr(os, "waitpid"):
+    wnohang = getattr(os, "WNOHANG", None)
+    if hasattr(os, "waitpid") and wnohang is not None:
         try:
-            waited_pid, _status = os.waitpid(pid, os.WNOHANG)
+            waited_pid, _status = os.waitpid(pid, wnohang)
         except ChildProcessError:
             waited_pid = 0
         if waited_pid == pid:

@@ -377,7 +377,7 @@ def listen_start(
         help="Artifact path for listener-captured provider/agent traffic.",
     ),
     startup_timeout_seconds: float = typer.Option(
-        5.0,
+        15.0,
         "--startup-timeout-seconds",
         help="Max time to wait for daemon startup.",
     ),
