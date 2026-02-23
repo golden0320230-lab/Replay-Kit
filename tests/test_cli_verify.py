@@ -52,7 +52,10 @@ def test_cli_verify_passes_for_valid_signed_artifact(tmp_path: Path) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.stdout.strip())
     assert payload["valid"] is True
-    assert payload["status"] == "verified"
+    assert payload["status"] == "ok"
+    assert payload["verification_status"] == "verified"
+    assert payload["artifact_path"] == str(path)
+    assert payload["message"]
 
 
 def test_cli_verify_fails_for_signature_mismatch(tmp_path: Path) -> None:
@@ -85,7 +88,9 @@ def test_cli_verify_fails_for_signature_mismatch(tmp_path: Path) -> None:
     assert result.exit_code == 1
     payload = json.loads(result.stdout.strip())
     assert payload["valid"] is False
-    assert payload["status"] == "invalid_signature"
+    assert payload["status"] == "error"
+    assert payload["verification_status"] == "invalid_signature"
+    assert payload["artifact_path"] == str(path)
 
 
 def test_cli_verify_missing_signature_behavior(tmp_path: Path) -> None:
@@ -97,7 +102,8 @@ def test_cli_verify_missing_signature_behavior(tmp_path: Path) -> None:
     strict_result = runner.invoke(app, ["verify", str(path), "--json"])
     assert strict_result.exit_code == 1
     strict_payload = json.loads(strict_result.stdout.strip())
-    assert strict_payload["status"] == "missing_signature"
+    assert strict_payload["status"] == "error"
+    assert strict_payload["verification_status"] == "missing_signature"
 
     allow_result = runner.invoke(
         app,
@@ -105,7 +111,8 @@ def test_cli_verify_missing_signature_behavior(tmp_path: Path) -> None:
     )
     assert allow_result.exit_code == 0
     allow_payload = json.loads(allow_result.stdout.strip())
-    assert allow_payload["status"] == "unsigned_allowed"
+    assert allow_payload["status"] == "ok"
+    assert allow_payload["verification_status"] == "unsigned_allowed"
 
 
 def test_cli_record_sign_writes_signature(tmp_path: Path) -> None:

@@ -55,6 +55,7 @@
                   "output": {},
                   "type": {
                     "enum": [
+                      "agent.command",
                       "prompt.render",
                       "model.request",
                       "model.response",

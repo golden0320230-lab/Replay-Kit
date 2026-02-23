@@ -78,6 +78,7 @@ _FALLBACK_ARTIFACT_SCHEMA_V1: dict[str, Any] = {
                                     "type": {
                                         "type": "string",
                                         "enum": [
+                                            "agent.command",
                                             "prompt.render",
                                             "model.request",
                                             "model.response",
