@@ -22,6 +22,7 @@ from replaypack.listener_gateway import (
     normalize_provider_request,
     provider_request_fingerprint,
 )
+from replaypack.listener_agent_gateway import detect_agent, normalize_agent_events
 from replaypack.listener_state import remove_listener_state, write_listener_state
 
 
@@ -42,6 +43,7 @@ class _ListenerRunRecorder:
         self._out_path = out_path
         self._step_sequence = 0
         self._request_sequence = 0
+        self._agent_event_sequence = 0
         timestamp = _utc_now()
         self._run = Run(
             id=f"run-listener-{session_id}",
@@ -150,6 +152,58 @@ class _ListenerRunRecorder:
             self._persist_locked()
             return status_code, response_payload
 
+    def record_agent_payload(
+        self,
+        *,
+        agent: str,
+        payload: Any,
+    ) -> tuple[int, int]:
+        with self._lock:
+            normalized_events, dropped = normalize_agent_events(agent=agent, payload=payload)
+            captured = 0
+            for normalized_event in normalized_events:
+                self._agent_event_sequence += 1
+                request_id = normalized_event.get("request_id")
+                if not request_id:
+                    request_id = f"{agent}-event-{self._agent_event_sequence:06d}"
+                metadata = dict(normalized_event["metadata"])
+                metadata["request_id"] = request_id
+                metadata["capture_mode"] = "passive"
+                self._run.steps.append(
+                    Step(
+                        id=self._next_step_id(),
+                        type=normalized_event["step_type"],
+                        input=normalized_event["input"],
+                        output=normalized_event["output"],
+                        metadata=metadata,
+                        timestamp=_utc_now(),
+                    )
+                )
+                captured += 1
+
+            if dropped > 0:
+                self._run.steps.append(
+                    Step(
+                        id=self._next_step_id(),
+                        type="error.event",
+                        input={"agent": agent},
+                        output={
+                            "message": "dropped malformed or unsupported agent event frames",
+                            "dropped": dropped,
+                        },
+                        metadata={
+                            "agent": agent,
+                            "event_type": "listener.drop",
+                            "capture_mode": "passive",
+                        },
+                        timestamp=_utc_now(),
+                    )
+                )
+
+            if captured > 0 or dropped > 0:
+                self._persist_locked()
+            return captured, dropped
+
     def _next_step_id(self) -> str:
         self._step_sequence += 1
         return f"step-{self._step_sequence:06d}"
@@ -217,6 +271,28 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             threading.Thread(target=_shutdown, daemon=True).start()
             return
 
+        agent = detect_agent(parsed.path)
+        if agent is not None:
+            recorder = self.server.recorder
+            if recorder is None:
+                self._write_json(503, {"status": "error", "message": "recorder not ready"})
+                return
+            payload, _parse_error = self._read_json_body()
+            captured, dropped = recorder.record_agent_payload(
+                agent=agent,
+                payload=payload,
+            )
+            self._write_json(
+                202,
+                {
+                    "status": "ok",
+                    "agent": agent,
+                    "captured": captured,
+                    "dropped": dropped,
+                },
+            )
+            return
+
         provider = detect_provider(parsed.path)
         if provider is None:
             self._write_json(404, {"status": "error", "message": "unsupported path"})
@@ -231,6 +307,10 @@ class _ListenerHandler(BaseHTTPRequestHandler):
         fail_reason = self.headers.get("x-replaykit-fail")
         if parse_error and not fail_reason:
             fail_reason = parse_error
+        if not isinstance(payload, dict):
+            if not fail_reason:
+                fail_reason = "non_object_json_body"
+            payload = {"raw_payload": payload}
 
         try:
             status_code, response_body = recorder.record_provider_transaction(
@@ -259,7 +339,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
-    def _read_json_body(self) -> tuple[dict[str, Any], str | None]:
+    def _read_json_body(self) -> tuple[Any, str | None]:
         length = int(self.headers.get("Content-Length", "0") or "0")
         body = self.rfile.read(length) if length > 0 else b""
         if not body:
@@ -269,7 +349,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             parsed = json.loads(decoded)
         except json.JSONDecodeError:
             return {"raw_body": decoded}, "invalid_json_body"
-        if isinstance(parsed, dict):
+        if isinstance(parsed, (dict, list)):
             return parsed, None
         return {"raw_body": decoded}, "non_object_json_body"
 
