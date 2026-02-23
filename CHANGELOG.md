@@ -13,6 +13,9 @@ The format follows Keep a Changelog and Semantic Versioning.
   - README install section now documents both `pip install -e .` and
     `python3 -m pip install -e \".[dev]\"`.
   - Release process docs continue to use GitHub release notes from `CHANGELOG.md`.
+- Provider-capture + target-recording release notes template added:
+  - `docs/release-notes-provider-capture-target-recording.md`.
+  - `docs/RELEASES.md` now includes explicit command examples for publishing notes.
 
 ## [0.1.0] - 2026-02-22
 

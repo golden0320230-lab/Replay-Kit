@@ -45,6 +45,23 @@ git push origin vX.Y.Z
 gh release create vX.Y.Z --title "vX.Y.Z" --notes-file CHANGELOG.md
 ```
 
+## Provider Capture + Target Recording Release Notes
+
+Use the curated release notes file when shipping provider-capture and target-record
+milestones:
+
+```bash
+gh release create vX.Y.Z \
+  --title "vX.Y.Z" \
+  --notes-file docs/release-notes-provider-capture-target-recording.md
+```
+
+Recommended flow:
+
+1. Update `docs/release-notes-provider-capture-target-recording.md`.
+2. Cut and push tag (`vX.Y.Z`).
+3. Publish release notes via `gh release create`.
+
 ## Verify Post-Release
 
 ```bash
