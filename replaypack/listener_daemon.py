@@ -23,6 +23,7 @@ from replaypack.listener_gateway import (
     provider_request_fingerprint,
 )
 from replaypack.listener_agent_gateway import detect_agent, normalize_agent_events
+from replaypack.listener_redaction import redact_listener_headers, redact_listener_value
 from replaypack.listener_state import remove_listener_state, write_listener_state
 
 
@@ -114,17 +115,19 @@ class _ListenerRunRecorder:
                         "request_id": request.request_id,
                         "model": request.model,
                         "stream": request.stream,
-                        "headers": request.headers,
-                        "payload": request.payload,
+                        "headers": redact_listener_headers(request.headers),
+                        "payload": redact_listener_value(request.payload),
                     },
                     output={"status": "captured"},
-                    metadata={
-                        "provider": provider,
-                        "path": path,
-                        "request_id": request.request_id,
-                        "correlation_id": correlation_id,
-                        "capture_mode": "passive",
-                    },
+                    metadata=redact_listener_value(
+                        {
+                            "provider": provider,
+                            "path": path,
+                            "request_id": request.request_id,
+                            "correlation_id": correlation_id,
+                            "capture_mode": "passive",
+                        }
+                    ),
                     timestamp=_utc_now(),
                 )
             )
@@ -132,20 +135,24 @@ class _ListenerRunRecorder:
                 Step(
                     id=self._next_step_id(),
                     type="model.response",
-                    input={"request_id": request.request_id},
+                    input=redact_listener_value({"request_id": request.request_id}),
                     output={
                         "status_code": status_code,
-                        "output": normalized_response.response,
-                        "assembled_text": normalized_response.assembled_text,
-                        "error": normalized_response.error,
+                        "output": redact_listener_value(normalized_response.response),
+                        "assembled_text": redact_listener_value(
+                            normalized_response.assembled_text
+                        ),
+                        "error": redact_listener_value(normalized_response.error),
                     },
-                    metadata={
-                        "provider": provider,
-                        "path": path,
-                        "request_id": request.request_id,
-                        "correlation_id": correlation_id,
-                        "capture_mode": "passive",
-                    },
+                    metadata=redact_listener_value(
+                        {
+                            "provider": provider,
+                            "path": path,
+                            "request_id": request.request_id,
+                            "correlation_id": correlation_id,
+                            "capture_mode": "passive",
+                        }
+                    ),
                     timestamp=_utc_now(),
                 )
             )
@@ -173,9 +180,9 @@ class _ListenerRunRecorder:
                     Step(
                         id=self._next_step_id(),
                         type=normalized_event["step_type"],
-                        input=normalized_event["input"],
-                        output=normalized_event["output"],
-                        metadata=metadata,
+                        input=redact_listener_value(normalized_event["input"]),
+                        output=redact_listener_value(normalized_event["output"]),
+                        metadata=redact_listener_value(metadata),
                         timestamp=_utc_now(),
                     )
                 )
