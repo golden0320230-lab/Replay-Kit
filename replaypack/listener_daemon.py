@@ -258,6 +258,9 @@ class _ListenerRunRecorder:
 
 
 class _ReplayListenerServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
     def __init__(
         self,
         server_address: tuple[str, int],
