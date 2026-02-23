@@ -13,6 +13,7 @@ from typing import Any
 
 import typer
 
+from replaypack.agents import list_agent_adapter_keys
 from replaypack.artifact import (
     ArtifactError,
     ArtifactMigrationError,
@@ -1693,10 +1694,11 @@ def agent_capture(
 ) -> None:
     """Capture coding-agent sessions (skeleton command)."""
     normalized_agent = agent.strip().lower()
-    if normalized_agent not in {"codex", "claude-code"}:
+    supported_agents = set(list_agent_adapter_keys())
+    if normalized_agent not in supported_agents:
         message = (
             f"agent capture failed: unsupported agent '{agent}'. "
-            "Expected codex or claude-code."
+            f"Expected one of: {', '.join(sorted(supported_agents))}."
         )
         if json_output:
             _echo_json(
@@ -1745,6 +1747,30 @@ def agent_capture(
     else:
         _echo(message, err=True)
     raise typer.Exit(code=1)
+
+
+@agent_app.command("providers")
+def agent_providers(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable agent listing output.",
+    ),
+) -> None:
+    """List supported coding-agent keys."""
+    agents = list(list_agent_adapter_keys())
+    if json_output:
+        _echo_json(
+            {
+                "status": "ok",
+                "exit_code": 0,
+                "message": "supported coding agents",
+                "artifact_path": None,
+                "agents": agents,
+            }
+        )
+    else:
+        _echo("\n".join(agents), force=True)
 
 
 @app.command()
