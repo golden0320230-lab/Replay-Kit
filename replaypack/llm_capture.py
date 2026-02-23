@@ -13,7 +13,12 @@ from replaypack.capture.redaction import (
     redact_payload,
 )
 from replaypack.core.models import Run
-from replaypack.providers import OpenAIProviderAdapter, FakeProviderAdapter, assemble_stream_capture
+from replaypack.providers import (
+    AnthropicProviderAdapter,
+    OpenAIProviderAdapter,
+    FakeProviderAdapter,
+    assemble_stream_capture,
+)
 
 
 @dataclass(slots=True)
@@ -213,3 +218,95 @@ def _iter_openai_stream_chunks(response: Any) -> list[dict[str, Any]]:
         if isinstance(chunk, dict):
             chunks.append(chunk)
     return chunks
+
+
+def build_anthropic_llm_run(
+    *,
+    model: str,
+    prompt: str,
+    stream: bool,
+    run_id: str,
+    api_key: str,
+    base_url: str,
+    timeout_seconds: float,
+    timestamp: str = "2026-02-22T00:00:00Z",
+    redaction_policy: RedactionPolicy | None = None,
+    request_post: Callable[..., Any] | None = None,
+) -> Run:
+    """Build Anthropic provider run with adapter-normalized steps."""
+    import requests
+
+    adapter = AnthropicProviderAdapter()
+    endpoint = f"{base_url.rstrip('/')}/v1/messages"
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": stream,
+        "max_tokens": 256,
+    }
+    post_fn = request_post or requests.post
+    effective_policy = redaction_policy or DEFAULT_REDACTION_POLICY
+
+    with capture_run(
+        run_id=run_id,
+        timestamp=timestamp,
+        redaction_policy=effective_policy,
+    ) as context:
+        request_view = adapter.normalize_request(
+            model=model,
+            payload=payload,
+            headers=headers,
+            url=endpoint,
+            stream=stream,
+        )
+        context.record_step(
+            "model.request",
+            input_payload={"model": model, "input": request_view},
+            output_payload={"status": "sent"},
+            metadata={
+                "provider": adapter.name,
+                "model": model,
+                "stream": stream,
+                "endpoint": endpoint,
+                "adapter_name": "anthropic.provider-adapter",
+            },
+        )
+
+        response = post_fn(
+            endpoint,
+            headers=headers,
+            json=payload,
+            timeout=timeout_seconds,
+            stream=stream,
+        )
+        response.raise_for_status()
+
+        if stream:
+            raw_chunks = list(_iter_openai_stream_chunks(response))
+            normalized_response = assemble_stream_capture(adapter, chunks=raw_chunks)
+        else:
+            normalized_response = adapter.normalize_response(response=response.json())
+
+        context.record_step(
+            "model.response",
+            input_payload={"request_url": endpoint},
+            output_payload={"output": adapter.redact(normalized_response, policy=effective_policy)},
+            metadata={
+                "provider": adapter.name,
+                "model": model,
+                "stream": stream,
+                "endpoint": endpoint,
+                "status_code": getattr(response, "status_code", 200),
+                "adapter_name": "anthropic.provider-adapter",
+            },
+        )
+        run = context.to_run()
+
+    run.source = "llm.capture"
+    run.provider = adapter.name
+    return run
