@@ -89,6 +89,27 @@ def test_unknown_fields_are_forward_compatible(tmp_path: Path) -> None:
     assert len(loaded_run.steps) == len(run.steps)
 
 
+def test_listener_run_metadata_fields_validate_and_round_trip(tmp_path: Path) -> None:
+    run = _sample_run()
+    run.source = "listener"
+    run.capture_mode = "passive"
+    run.listener_session_id = "listener-session-001"
+    run.listener_process = {"pid": 1001, "executable": "/usr/bin/python3"}
+    run.listener_bind = {"host": "127.0.0.1", "port": 9000}
+
+    artifact = build_artifact_envelope(run, version="1.0")
+    validate_artifact(artifact)
+
+    path = tmp_path / "listener-schema.rpk"
+    path.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    loaded = read_artifact(path)
+    assert loaded.source == "listener"
+    assert loaded.capture_mode == "passive"
+    assert loaded.listener_session_id == "listener-session-001"
+    assert loaded.listener_process == {"pid": 1001, "executable": "/usr/bin/python3"}
+    assert loaded.listener_bind == {"host": "127.0.0.1", "port": 9000}
+
+
 def test_major_version_mismatch_is_not_compatible() -> None:
     assert is_version_compatible("2.0") is False
     with pytest.raises(ArtifactValidationError, match="Unsupported artifact major version"):

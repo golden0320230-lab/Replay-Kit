@@ -34,6 +34,27 @@
             "id": {
               "type": "string"
             },
+            "source": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "agent": {
+              "type": "string"
+            },
+            "capture_mode": {
+              "type": "string"
+            },
+            "listener_session_id": {
+              "type": "string"
+            },
+            "listener_process": {
+              "type": "object"
+            },
+            "listener_bind": {
+              "type": "object"
+            },
             "runtime_versions": {
               "type": "object"
             },

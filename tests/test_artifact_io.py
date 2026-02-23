@@ -82,13 +82,22 @@ def test_writer_uses_safe_environment_subset(sample_run: Run, tmp_path: Path) ->
     assert env["os"] == "macOS"
 
 
-def test_run_source_provider_agent_round_trip(tmp_path: Path) -> None:
+def test_run_source_provider_agent_listener_round_trip(tmp_path: Path) -> None:
     run = Run(
         id="run-source-provider-agent-001",
         timestamp="2026-02-23T01:00:00Z",
-        source="llm.capture",
+        source="listener",
         provider="openai",
-        agent=None,
+        agent="codex",
+        capture_mode="passive",
+        listener_session_id="listener-session-001",
+        listener_process={
+            "pid": 12345,
+            "executable": "/usr/bin/python3",
+            "command": ["python3", "app.py"],
+            "cwd": "/tmp/demo",
+        },
+        listener_bind={"host": "127.0.0.1", "port": 8400},
         environment_fingerprint={"os": "linux"},
         runtime_versions={"python": "3.12.0"},
         steps=[],
@@ -97,9 +106,18 @@ def test_run_source_provider_agent_round_trip(tmp_path: Path) -> None:
     write_artifact(run, artifact_path)
 
     loaded = read_artifact(artifact_path)
-    assert loaded.source == "llm.capture"
+    assert loaded.source == "listener"
     assert loaded.provider == "openai"
-    assert loaded.agent is None
+    assert loaded.agent == "codex"
+    assert loaded.capture_mode == "passive"
+    assert loaded.listener_session_id == "listener-session-001"
+    assert loaded.listener_process == {
+        "pid": 12345,
+        "executable": "/usr/bin/python3",
+        "command": ["python3", "app.py"],
+        "cwd": "/tmp/demo",
+    }
+    assert loaded.listener_bind == {"host": "127.0.0.1", "port": 8400}
 
 
 def test_invalid_artifact_missing_required_field_fails(sample_run: Run) -> None:
