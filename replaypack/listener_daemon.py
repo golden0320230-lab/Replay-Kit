@@ -309,9 +309,11 @@ class _ListenerRunRecorder:
         *,
         agent: str,
         payload: Any,
+        initial_dropped: int = 0,
     ) -> tuple[int, int]:
         with self._lock:
             normalized_events, dropped = normalize_agent_events(agent=agent, payload=payload)
+            dropped += max(0, initial_dropped)
             captured = 0
             for normalized_event in normalized_events:
                 self._agent_event_sequence += 1
@@ -505,11 +507,23 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             if recorder is None:
                 self._write_json(503, {"status": "error", "message": "recorder not ready"})
                 return
-            payload, _parse_error = self._read_json_body()
+            payload, parse_error, parse_dropped = self._read_agent_body()
             captured, dropped = recorder.record_agent_payload(
                 agent=agent,
                 payload=payload,
+                initial_dropped=parse_dropped,
             )
+            if parse_error:
+                recorder.record_internal_error(
+                    category="agent_parse_failure",
+                    message="listener agent payload parse failure; malformed frames dropped",
+                    details={
+                        "agent": agent,
+                        "path": parsed.path,
+                        "reason": parse_error,
+                        "dropped_frames": parse_dropped,
+                    },
+                )
             if dropped > 0:
                 self.server.register_dropped_events(dropped)
             self._write_json(
@@ -519,6 +533,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                     "agent": agent,
                     "captured": captured,
                     "dropped": dropped,
+                    "parse_error": parse_error,
                     "metrics": self.server.metrics_payload(),
                 },
             )
@@ -596,6 +611,39 @@ class _ListenerHandler(BaseHTTPRequestHandler):
         if isinstance(parsed, (dict, list)):
             return parsed, None
         return {"raw_body": decoded}, "non_object_json_body"
+
+    def _read_agent_body(self) -> tuple[Any, str | None, int]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(length) if length > 0 else b""
+        if not body:
+            return {}, None, 0
+
+        decoded = body.decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(decoded)
+        except json.JSONDecodeError:
+            parsed_events: list[Any] = []
+            dropped_frames = 0
+            for line in decoded.splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    parsed_events.append(json.loads(stripped))
+                except json.JSONDecodeError:
+                    dropped_frames += 1
+
+            if parsed_events:
+                parse_error: str | None = None
+                if dropped_frames > 0:
+                    parse_error = "jsonl_partial_parse"
+                return parsed_events, parse_error, dropped_frames
+
+            return {"raw_body": decoded}, "invalid_json_body", max(1, dropped_frames)
+
+        if isinstance(parsed, (dict, list)):
+            return parsed, None, 0
+        return {"raw_body": decoded}, "non_object_json_body", 1
 
     def _write_json(self, status_code: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")

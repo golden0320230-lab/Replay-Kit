@@ -14,6 +14,7 @@ Passive contract details (provider matrix, streaming semantics, failure semantic
 - Agent event streams:
   - Codex: `/agent/codex/events`
   - Claude Code: `/agent/claude-code/events`
+  - Payload formats: JSON object, JSON array, or newline-delimited JSON (JSONL)
 
 Captured artifacts include canonical `model.request`, `model.response`, `tool.request`, `tool.response`, and `error.event` steps.
 
@@ -115,7 +116,7 @@ Behavior:
 Best-effort behavior is enabled by default:
 
 - If capture internals fail, listener returns degraded fallback provider responses and records diagnostics as `error.event`.
-- Malformed agent frames are dropped with diagnostics and metrics increments.
+- Malformed agent frames are dropped with diagnostics (`parse_error` in response + `error.event`) and metrics increments.
 - Passive `.rpk` writes are atomic, so abrupt listener termination keeps the last committed artifact valid.
 
 ## Security
@@ -150,6 +151,6 @@ For provider requests with `stream=true`, passive listener artifacts store:
 - `listen env failed: listener is not running`:
   - Start listener first, then re-run `listen env`.
 - Repeated `dropped_events` in health metrics:
-  - Verify agent payload is JSON object/list with expected `type` fields.
+  - Verify agent payload is JSON object/list/JSONL with expected `type` fields.
 - `capture_errors` increasing:
   - Inspect `error.event` steps in artifact and check CI/uploaded logs under `runs/passive`.
