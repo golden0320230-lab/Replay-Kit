@@ -1271,6 +1271,7 @@ def _llm_capture_command(
                 prompt=prompt,
                 stream=stream,
                 run_id=run_id,
+                redaction_policy=redaction_policy,
             )
         elif normalized_provider == "openai":
             if not api_key or not api_key.strip():
