@@ -175,7 +175,7 @@ def build_openai_llm_run(
         response.raise_for_status()
 
         if stream:
-            raw_chunks = list(_iter_openai_stream_chunks(response))
+            raw_chunks = list(_iter_sse_json_chunks(response))
             normalized_response = assemble_stream_capture(adapter, chunks=raw_chunks)
         else:
             normalized_response = adapter.normalize_response(response=response.json())
@@ -200,7 +200,7 @@ def build_openai_llm_run(
     return run
 
 
-def _iter_openai_stream_chunks(response: Any) -> list[dict[str, Any]]:
+def _iter_sse_json_chunks(response: Any) -> list[dict[str, Any]]:
     chunks: list[dict[str, Any]] = []
     for raw_line in response.iter_lines():
         if raw_line is None:
@@ -288,7 +288,7 @@ def build_anthropic_llm_run(
         response.raise_for_status()
 
         if stream:
-            raw_chunks = list(_iter_openai_stream_chunks(response))
+            raw_chunks = list(_iter_sse_json_chunks(response))
             normalized_response = assemble_stream_capture(adapter, chunks=raw_chunks)
         else:
             normalized_response = adapter.normalize_response(response=response.json())
@@ -377,7 +377,7 @@ def build_google_llm_run(
         response.raise_for_status()
 
         if stream:
-            raw_chunks = list(_iter_openai_stream_chunks(response))
+            raw_chunks = list(_iter_sse_json_chunks(response))
             normalized_response = assemble_stream_capture(adapter, chunks=raw_chunks)
         else:
             normalized_response = adapter.normalize_response(response=response.json())
