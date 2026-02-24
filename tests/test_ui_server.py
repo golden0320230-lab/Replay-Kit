@@ -94,8 +94,8 @@ def test_ui_server_rename_artifact_success_and_validation_errors(tmp_path: Path)
         )
         assert status_code == 200
         assert payload["status"] == "ok"
-        assert payload["old_path"] == "runs/manual/capture.rpk"
-        assert payload["new_path"] == "runs/manual/renamed.rpk"
+        assert payload["old_path"].replace("\\", "/") == "runs/manual/capture.rpk"
+        assert payload["new_path"].replace("\\", "/") == "runs/manual/renamed.rpk"
         assert not source.exists()
         assert (artifacts_dir / "renamed.rpk").exists()
 
