@@ -21,6 +21,36 @@ Out of scope:
 - Hosted control plane.
 - Provider-side instrumentation not visible to the local process boundary.
 
+## Transparent Mode (macOS MVP)
+
+Transparent mode extends passive capture with macOS interception lifecycle control:
+
+- `listen transparent doctor`
+- `listen transparent start`
+- `listen transparent status`
+- `listen transparent stop`
+
+Design intent:
+
+- Keep networking rollback-safe and explicit.
+- Persist rollback handles in transparent state.
+- Clean stale transparent sessions on `start`/`status` when previous PIDs are gone.
+
+Current implementation boundaries:
+
+- macOS-only command path.
+- Transparent state machine is separate from passive listener state machine.
+- Transparent lifecycle does not replace passive artifact capture lifecycle:
+  - keep using `listen start|stop` for `.rpk` writing.
+- By default (`REPLAYKIT_TRANSPARENT_EXECUTE` unset), transparent apply/rollback runs in safe dry-run mode for CI determinism.
+- Full "no env changes" background interception remains an active gap; routing exports or explicit base URLs are still required for deterministic capture workflows.
+
+Transparent tests:
+
+- `tests/test_cli_listen_transparent.py`
+- `tests/test_transparent_macos_controller.py`
+- `tests/test_listener_replay_parity.py` (`test_transparent_e2e_capture_replay_assert`, `test_transparent_replay_parity_fixed_seed_clock`)
+
 ## Passive Capture Contract
 
 ### Provider/Endpoint Support Matrix
