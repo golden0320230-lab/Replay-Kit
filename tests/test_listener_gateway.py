@@ -456,3 +456,144 @@ def test_listener_gateway_upstream_timeout_returns_502(tmp_path: Path) -> None:
     assert response_step.output["error"]["type"] == "gateway_error"
     assert "upstream_forward_failed" in response_step.output["error"]["message"]
     assert response_step.metadata.get("response_source") == "upstream_error"
+
+
+def test_listener_gateway_stream_capture_records_ordered_events(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        openai = requests.post(
+            f"{base_url}/v1/chat/completions",
+            json={
+                "model": "gpt-4o-mini",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello openai"}],
+            },
+            timeout=2.0,
+        )
+        assert openai.status_code == 200
+
+        anthropic = requests.post(
+            f"{base_url}/v1/messages",
+            json={
+                "model": "claude-3-5-sonnet",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello anthropic"}],
+            },
+            timeout=2.0,
+        )
+        assert anthropic.status_code == 200
+
+        google = requests.post(
+            f"{base_url}/v1beta/models/gemini-1.5-flash:generateContent",
+            json={
+                "stream": True,
+                "contents": [{"role": "user", "parts": [{"text": "hello google"}]}],
+            },
+            timeout=2.0,
+        )
+        assert google.status_code == 200
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    response_steps = [step for step in run.steps if step.type == "model.response"]
+    assert len(response_steps) == 3
+
+    for step in response_steps:
+        stream_payload = step.output["stream"]
+        assert stream_payload["enabled"] is True
+        assert stream_payload["completed"] is True
+        assert stream_payload["event_count"] > 0
+        events = stream_payload["events"]
+        assert [event["index"] for event in events] == list(
+            range(1, len(events) + 1)
+        )
+        assembled = "".join(event["delta_text"] for event in events)
+        assert assembled == step.output["assembled_text"]
+
+
+def test_listener_gateway_stream_failure_marks_incomplete_stream(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        response = requests.post(
+            f"{base_url}/v1/chat/completions",
+            json={
+                "model": "gpt-4o-mini",
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            headers={"x-replaykit-fail": "forced-stream-failure"},
+            timeout=2.0,
+        )
+        assert response.status_code == 502
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    response_step = run.steps[-1]
+    assert response_step.type == "model.response"
+    assert response_step.output["status_code"] == 502
+    stream_payload = response_step.output["stream"]
+    assert stream_payload["enabled"] is True
+    assert stream_payload["completed"] is False
+    assert stream_payload["event_count"] == 0
+    assert stream_payload["events"] == []
+    assert response_step.output["error"]["type"] == "gateway_error"

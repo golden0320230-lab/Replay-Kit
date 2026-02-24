@@ -35,7 +35,9 @@
         "id": "msg-upstream-001",
         "type": "message"
       },
-      "status_code": 200
+      "status_code": 200,
+      "stream": false,
+      "stream_events": []
     }
   },
   "google": {
@@ -80,7 +82,9 @@
           "message": "upstream unavailable"
         }
       },
-      "status_code": 503
+      "status_code": 503,
+      "stream": false,
+      "stream_events": []
     }
   },
   "openai": {
@@ -126,7 +130,9 @@
         "id": "chatcmpl-upstream-001",
         "object": "chat.completion"
       },
-      "status_code": 200
+      "status_code": 200,
+      "stream": false,
+      "stream_events": []
     }
   }
 }

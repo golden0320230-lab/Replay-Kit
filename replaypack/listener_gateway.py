@@ -27,6 +27,8 @@ class ProviderResponse:
     status_code: int
     response: dict[str, Any]
     assembled_text: str
+    stream: bool = False
+    stream_events: list[dict[str, Any]] | None = None
     error: dict[str, Any] | None = None
 
 
@@ -89,6 +91,8 @@ def build_provider_response(
             status_code=status,
             response=body,
             assembled_text="",
+            stream=request.stream,
+            stream_events=[],
             error={"type": "gateway_error", "message": fail_reason},
         )
         return status, body, normalized
@@ -121,6 +125,7 @@ def build_provider_response(
         provider=request.provider,
         status_code=200,
         payload=response,
+        stream=request.stream,
     )
     return 200, response, normalized
 
@@ -160,16 +165,22 @@ def normalize_provider_response(
     provider: str,
     status_code: int,
     payload: dict[str, Any],
+    stream: bool = False,
 ) -> ProviderResponse:
     assembled_text = _extract_text(provider, payload)
     error_payload = None
     if status_code >= 400:
         error_payload = {"status_code": status_code, "payload": dict(payload)}
+    stream_events: list[dict[str, Any]] = []
+    if stream and status_code < 400 and assembled_text:
+        stream_events = _synthesize_stream_events(provider=provider, assembled_text=assembled_text)
     return ProviderResponse(
         provider=provider,
         status_code=status_code,
         response=_stable_object_copy(payload),
         assembled_text=assembled_text,
+        stream=stream,
+        stream_events=stream_events,
         error=error_payload,
     )
 
@@ -251,3 +262,22 @@ def _extract_text(provider: str, payload: dict[str, Any]) -> str:
                                     chunks.append(text)
                         return "".join(chunks)
     return ""
+
+
+def _synthesize_stream_events(*, provider: str, assembled_text: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for index, chunk in enumerate(_split_stream_chunks(assembled_text), start=1):
+        events.append(
+            {
+                "index": index,
+                "provider": provider,
+                "delta_text": chunk,
+            }
+        )
+    return events
+
+
+def _split_stream_chunks(text: str, chunk_size: int = 3) -> list[str]:
+    if not text:
+        return []
+    return [text[idx : idx + chunk_size] for idx in range(0, len(text), chunk_size)]

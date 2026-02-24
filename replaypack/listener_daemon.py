@@ -271,6 +271,16 @@ class _ListenerRunRecorder:
                         "assembled_text": redact_listener_value(
                             normalized_response.assembled_text
                         ),
+                        "stream": {
+                            "enabled": bool(normalized_response.stream),
+                            "completed": bool(
+                                normalized_response.stream and status_code < 400
+                            ),
+                            "event_count": len(normalized_response.stream_events or []),
+                            "events": redact_listener_value(
+                                normalized_response.stream_events or []
+                            ),
+                        },
                         "error": redact_listener_value(normalized_response.error),
                     },
                     metadata=redact_listener_value(
