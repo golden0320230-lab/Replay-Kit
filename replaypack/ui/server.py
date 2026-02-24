@@ -93,6 +93,37 @@ def _resolve_browser_path(base_dir: Path, raw_path: str | None) -> Path:
     return resolved
 
 
+def _resolve_rename_paths(base_dir: Path, raw_path: str, new_name: str) -> tuple[Path, Path]:
+    if not raw_path:
+        raise ValueError("Missing required field: path")
+    if not new_name:
+        raise ValueError("Missing required field: new_name")
+    if "/" in new_name or "\\" in new_name:
+        raise ValueError("new_name must be a file name, not a path")
+    if new_name in {".", ".."}:
+        raise ValueError("new_name must be a valid file name")
+
+    source_candidate = Path(unquote(raw_path))
+    source = (
+        source_candidate.resolve()
+        if source_candidate.is_absolute()
+        else (base_dir / source_candidate).resolve()
+    )
+    if not source.exists() or not source.is_file():
+        raise FileNotFoundError(f"File not found: {source}")
+    if source.suffix not in _SUPPORTED_SUFFIXES:
+        raise ValueError("Only .rpk and .bundle files can be renamed from UI")
+
+    target = source.with_name(new_name)
+    if target == source:
+        raise ValueError("new_name must differ from current file name")
+    if target.suffix not in _SUPPORTED_SUFFIXES:
+        raise ValueError("Renamed file must use .rpk or .bundle extension")
+    if target.exists():
+        raise FileExistsError(f"Destination already exists: {target}")
+    return source, target
+
+
 def _list_browser_entries(base_dir: Path, directory: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     children = sorted(
@@ -195,6 +226,10 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
 
             if route == "/api/listener/stop":
                 self._handle_listener_stop()
+                return
+
+            if route == "/api/fs/rename":
+                self._handle_fs_rename()
                 return
 
             self._write_json(404, {"error": "Not found"})
@@ -328,6 +363,33 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             payload["ui_listener_out_file"] = _display_path(base_dir, listener_out_path)
             payload["ui_listener_recordings_dir"] = _display_path(base_dir, listener_recordings_dir)
             self._write_json(200 if code == 0 else 400, payload)
+
+        def _handle_fs_rename(self) -> None:
+            request = self._read_json_body()
+            source_raw = str(request.get("path", "")).strip()
+            new_name_raw = str(request.get("new_name", "")).strip()
+            try:
+                source_path, target_path = _resolve_rename_paths(
+                    base_dir,
+                    source_raw,
+                    new_name_raw,
+                )
+                source_path.rename(target_path)
+            except (FileNotFoundError, ValueError, OSError) as error:
+                self._write_json(400, {"status": "error", "message": str(error)})
+                return
+
+            self._write_json(
+                200,
+                {
+                    "status": "ok",
+                    "message": "File renamed.",
+                    "old_path": _display_path(base_dir, source_path),
+                    "new_path": _display_path(base_dir, target_path),
+                    "old_absolute_path": str(source_path),
+                    "new_absolute_path": str(target_path),
+                },
+            )
 
         def _read_json_body(self) -> dict[str, Any]:
             raw_length = self.headers.get("Content-Length")
@@ -1122,6 +1184,13 @@ def _render_index_html() -> str:
           rightButton.disabled = !isArtifact;
           rightButton.addEventListener("click", () => setArtifactFromBrowser("right", entry.path));
           actions.appendChild(rightButton);
+
+          const renameButton = document.createElement("button");
+          renameButton.type = "button";
+          renameButton.textContent = "Rename";
+          renameButton.disabled = !isArtifact;
+          renameButton.addEventListener("click", () => renameBrowserArtifact(entry.path, entry.name));
+          actions.appendChild(renameButton);
         }
         item.appendChild(actions);
         browserList.appendChild(item);
@@ -1148,6 +1217,44 @@ def _render_index_html() -> str:
         renderBrowserEntries(payload.entries || []);
       } catch (_err) {
         setStatus("Unable to fetch filesystem browser listing.", true);
+      }
+    }
+
+    async function renameBrowserArtifact(path, currentName) {
+      const proposedName = window.prompt("Rename artifact file", currentName || "");
+      if (proposedName === null) {
+        return;
+      }
+      const newName = proposedName.trim();
+      if (!newName) {
+        setStatus("Rename cancelled: new file name is required.", true);
+        return;
+      }
+      try {
+        const res = await fetch("/api/fs/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: path, new_name: newName }),
+        });
+        const payload = await res.json();
+        if (!res.ok || payload.status === "error") {
+          setStatus(payload.message || "Rename failed.", true);
+          return;
+        }
+        if (leftInput.value === payload.old_path) {
+          leftInput.value = payload.new_path;
+        }
+        if (rightInput.value === payload.old_path) {
+          rightInput.value = payload.new_path;
+        }
+        if (listenerOutFileInput.value === payload.old_path) {
+          listenerOutFileInput.value = payload.new_path;
+        }
+        await loadArtifactOptions();
+        await browseDirectory(state.browserCurrentPath || browserPathInput.value || "");
+        setStatus((payload.message || "Rename completed.") + " " + payload.new_path);
+      } catch (_err) {
+        setStatus("Rename request failed.", true);
       }
     }
 
