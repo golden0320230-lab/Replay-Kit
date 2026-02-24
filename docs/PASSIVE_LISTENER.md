@@ -9,6 +9,7 @@ Passive contract details (provider matrix, streaming semantics, failure semantic
 
 - Provider gateway traffic to listener paths:
   - OpenAI-compatible: `/v1/chat/completions`
+  - OpenAI Responses-compatible: `/responses`, `/v1/responses`
   - Anthropic-compatible: `/v1/messages`
   - Gemini-compatible: `/v1beta/models/<model>:generateContent`
 - Agent event streams:
@@ -87,6 +88,24 @@ replaykit listen stop --state-file runs/passive/state.json --json
 replaykit assert runs/passive/capture.rpk --candidate runs/passive/capture.rpk --json
 replaykit replay runs/passive/capture.rpk --out runs/passive/replay.rpk --seed 19 --fixed-clock 2026-02-23T00:00:00Z
 ```
+
+## One-Shell Codex Workflow
+
+Use a single shell so `listen env` exports are active for `codex exec`:
+
+```bash
+mkdir -p runs/passive
+replaykit listen start --state-file runs/passive/state.json --out runs/passive/codex-passive.rpk --json
+eval "$(replaykit listen env --state-file runs/passive/state.json --shell bash)"
+codex exec --json "say hello"
+replaykit listen stop --state-file runs/passive/state.json --json
+replaykit assert runs/passive/codex-passive.rpk --candidate runs/passive/codex-passive.rpk --json
+```
+
+Expected artifact characteristics:
+
+- At least one `model.request` and `model.response` pair for `/responses` or `/v1/responses`.
+- `step.metadata.provider == "openai"` on Responses-captured steps.
 
 ## Optional Upstream Pass-Through
 
@@ -179,6 +198,11 @@ For provider requests with `stream=true`, passive listener artifacts store:
   - Verify agent payload is JSON object/list/JSONL with expected `type` fields.
 - `capture_errors` increasing:
   - Inspect `error.event` steps in artifact and check CI/uploaded logs under `runs/passive`.
+- `codex exec` shows `unsupported path ... /responses`:
+  - Ensure your ReplayKit build includes OpenAI Responses routes (`/responses`, `/v1/responses`).
+  - Re-run `listen env` in the same shell where `codex exec` runs.
+  - Verify the listener by probing one route directly:
+    - `curl -sS "$OPENAI_BASE_URL/responses" -H "content-type: application/json" -d '{"model":"gpt-5.3-codex","input":"ping"}'`
 
 ## Recovery Playbook
 
