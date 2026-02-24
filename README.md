@@ -96,6 +96,12 @@ replaykit listen stop --state-file runs/passive/state.json --json
 
 Routing exports from `listen env` include provider base URLs and agent event endpoints. No API keys are emitted.
 
+Supported OpenAI passive listener routes include:
+
+- `/v1/chat/completions`
+- `/responses`
+- `/v1/responses`
+
 Operator runbook with verification, streaming notes, and recovery steps:
 `docs/PASSIVE_LISTENER.md`
 
@@ -370,6 +376,19 @@ replaykit listen status --state-file runs/passive/state.json --json
 replaykit assert runs/passive/capture.rpk --candidate runs/passive/capture.rpk --json
 replaykit listen stop --state-file runs/passive/state.json --json
 ```
+
+Codex passive capture in one shell (no ReplayKit wrapper around Codex):
+
+```bash
+mkdir -p runs/passive
+replaykit listen start --state-file runs/passive/state.json --out runs/passive/codex-passive.rpk --json
+eval "$(replaykit listen env --state-file runs/passive/state.json --shell bash)"
+codex exec --json "say hello"
+replaykit listen stop --state-file runs/passive/state.json --json
+replaykit assert runs/passive/codex-passive.rpk --candidate runs/passive/codex-passive.rpk --json
+```
+
+If Codex reports `unsupported path` for `/responses`, upgrade to a ReplayKit build that supports `/responses` and `/v1/responses`, then re-run `listen env` in the same shell as `codex exec`.
 
 Launch the local UI:
 
