@@ -677,6 +677,17 @@ def test_listener_gateway_stream_capture_records_ordered_events(tmp_path: Path) 
     base_url = f"http://{started['host']}:{started['port']}"
 
     try:
+        responses_route = requests.post(
+            f"{base_url}/responses",
+            json={
+                "model": "gpt-5.3-codex",
+                "stream": True,
+                "input": "hello responses stream",
+            },
+            timeout=2.0,
+        )
+        assert responses_route.status_code == 200
+
         openai = requests.post(
             f"{base_url}/v1/chat/completions",
             json={
@@ -723,7 +734,7 @@ def test_listener_gateway_stream_capture_records_ordered_events(tmp_path: Path) 
 
     run = read_artifact(out_path)
     response_steps = [step for step in run.steps if step.type == "model.response"]
-    assert len(response_steps) == 3
+    assert len(response_steps) == 4
 
     for step in response_steps:
         stream_payload = step.output["stream"]
@@ -766,6 +777,64 @@ def test_listener_gateway_stream_failure_marks_incomplete_stream(tmp_path: Path)
                 "model": "gpt-4o-mini",
                 "stream": True,
                 "messages": [{"role": "user", "content": "hello"}],
+            },
+            headers={"x-replaykit-fail": "forced-stream-failure"},
+            timeout=2.0,
+        )
+        assert response.status_code == 502
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    response_step = run.steps[-1]
+    assert response_step.type == "model.response"
+    assert response_step.output["status_code"] == 502
+    stream_payload = response_step.output["stream"]
+    assert stream_payload["enabled"] is True
+    assert stream_payload["completed"] is False
+    assert stream_payload["event_count"] == 0
+    assert stream_payload["events"] == []
+    assert response_step.output["error"]["type"] == "gateway_error"
+
+
+def test_listener_gateway_responses_stream_failure_marks_incomplete_stream(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        response = requests.post(
+            f"{base_url}/responses",
+            json={
+                "model": "gpt-5.3-codex",
+                "stream": True,
+                "input": "hello",
             },
             headers={"x-replaykit-fail": "forced-stream-failure"},
             timeout=2.0,
