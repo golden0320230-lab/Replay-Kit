@@ -85,6 +85,8 @@ def _local_upstream_server(
 
 
 def test_listener_gateway_detect_provider_paths() -> None:
+    assert detect_provider("/models") == "openai"
+    assert detect_provider("/v1/models") == "openai"
     assert detect_provider("/responses") == "openai"
     assert detect_provider("/v1/responses") == "openai"
     assert detect_provider("/v1/chat/completions") == "openai"
@@ -143,7 +145,20 @@ def test_listener_gateway_serves_openai_models_routes(tmp_path: Path) -> None:
         assert stop_result.exit_code == 0, stop_result.output
 
     run = read_artifact(out_path)
-    assert run.steps == []
+    assert [step.type for step in run.steps] == [
+        "model.request",
+        "model.response",
+        "model.request",
+        "model.response",
+    ]
+    assert [step.metadata.get("path") for step in run.steps] == [
+        "/models",
+        "/models",
+        "/v1/models",
+        "/v1/models",
+    ]
+    assert run.steps[1].output["output"]["object"] == "list"
+    assert run.steps[3].output["output"]["object"] == "list"
 
 
 def test_listener_gateway_captures_openai_anthropic_google_steps(tmp_path: Path) -> None:

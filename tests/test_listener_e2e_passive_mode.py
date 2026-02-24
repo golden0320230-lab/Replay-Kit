@@ -326,10 +326,20 @@ def test_passive_listener_e2e_codex_models_preflight_and_encoded_response(
         _stop_listener(runner, state_file=state_file)
 
     run = read_artifact(capture_path)
-    assert [step.type for step in run.steps] == ["model.request", "model.response"]
-    assert [step.metadata.get("path") for step in run.steps] == ["/responses", "/responses"]
-    assert run.steps[0].input["payload"]["model"] == "gpt-5.3-codex"
-    assert run.steps[0].input["payload"]["input"] == "say hello"
+    assert [step.type for step in run.steps] == [
+        "model.request",
+        "model.response",
+        "model.request",
+        "model.response",
+    ]
+    assert [step.metadata.get("path") for step in run.steps] == [
+        "/models",
+        "/models",
+        "/responses",
+        "/responses",
+    ]
+    assert run.steps[2].input["payload"]["model"] == "gpt-5.3-codex"
+    assert run.steps[2].input["payload"]["input"] == "say hello"
 
     replay = runner.invoke(
         app,
@@ -359,4 +369,4 @@ def test_passive_listener_e2e_codex_models_preflight_and_encoded_response(
     assert assertion.exit_code == 0, assertion.output
     summary = json.loads(assertion.stdout.strip())
     assert summary["status"] == "pass"
-    assert summary["summary"]["identical"] == 2
+    assert summary["summary"]["identical"] == 4
