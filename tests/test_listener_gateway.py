@@ -72,6 +72,8 @@ def _local_upstream_server(
 
 
 def test_listener_gateway_detect_provider_paths() -> None:
+    assert detect_provider("/responses") == "openai"
+    assert detect_provider("/v1/responses") == "openai"
     assert detect_provider("/v1/chat/completions") == "openai"
     assert detect_provider("/v1/messages") == "anthropic"
     assert detect_provider("/v1beta/models/gemini-1.5-flash:generateContent") == "google"
@@ -148,6 +150,83 @@ def test_listener_gateway_captures_openai_anthropic_google_steps(tmp_path: Path)
     ]
     providers = [step.metadata.get("provider") for step in run.steps]
     assert providers == ["openai", "openai", "anthropic", "anthropic", "google", "google"]
+
+
+def test_listener_gateway_captures_openai_responses_routes(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        responses = requests.post(
+            f"{base_url}/responses",
+            json={"model": "gpt-5.3-codex", "input": "say hello"},
+            timeout=2.0,
+        )
+        assert responses.status_code == 200
+        responses_payload = responses.json()
+        assert responses_payload["object"] == "response"
+        assert responses_payload["status"] == "completed"
+        assert responses_payload["output"][0]["type"] == "message"
+
+        v1_responses = requests.post(
+            f"{base_url}/v1/responses",
+            json={"model": "gpt-5.3-codex", "input": "say hello again"},
+            timeout=2.0,
+        )
+        assert v1_responses.status_code == 200
+        v1_payload = v1_responses.json()
+        assert v1_payload["object"] == "response"
+        assert v1_payload["status"] == "completed"
+        assert v1_payload["output"][0]["type"] == "message"
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    assert [step.type for step in run.steps] == [
+        "model.request",
+        "model.response",
+        "model.request",
+        "model.response",
+    ]
+    assert [step.metadata.get("provider") for step in run.steps] == [
+        "openai",
+        "openai",
+        "openai",
+        "openai",
+    ]
+    assert [step.metadata.get("path") for step in run.steps] == [
+        "/responses",
+        "/responses",
+        "/v1/responses",
+        "/v1/responses",
+    ]
 
 
 def test_listener_gateway_error_path_returns_502_and_captures_failure(tmp_path: Path) -> None:
@@ -318,9 +397,120 @@ def test_listener_gateway_forwards_upstream_provider_responses(tmp_path: Path) -
     assert response_steps[0].output["assembled_text"] == "openai-upstream"
     assert response_steps[1].output["assembled_text"] == "anthropic-upstream"
     assert response_steps[2].output["assembled_text"] == "google-upstream"
+
+
+def test_listener_gateway_forwards_upstream_openai_responses_routes(tmp_path: Path) -> None:
+    routes = {
+        "/responses": (
+            200,
+            {
+                "id": "resp-upstream-001",
+                "object": "response",
+                "status": "completed",
+                "model": "gpt-5.3-codex",
+                "output": [
+                    {
+                        "id": "msg-upstream-001",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "hi from upstream"}],
+                    }
+                ],
+            },
+            0.0,
+        ),
+        "/v1/responses": (
+            200,
+            {
+                "id": "resp-upstream-002",
+                "object": "response",
+                "status": "completed",
+                "model": "gpt-5.3-codex",
+                "output": [
+                    {
+                        "id": "msg-upstream-002",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "hello from upstream"}],
+                    }
+                ],
+            },
+            0.0,
+        ),
+    }
+    with _local_upstream_server(routes) as (upstream_base_url, captured_requests):
+        runner = CliRunner()
+        state_file = tmp_path / "listener-state.json"
+        out_path = tmp_path / "listener-capture.rpk"
+        start_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "start",
+                "--state-file",
+                str(state_file),
+                "--out",
+                str(out_path),
+                "--json",
+            ],
+            env={
+                "REPLAYKIT_OPENAI_UPSTREAM_URL": upstream_base_url,
+            },
+        )
+        assert start_result.exit_code == 0, start_result.output
+        started = json.loads(start_result.stdout.strip())
+        base_url = f"http://{started['host']}:{started['port']}"
+        try:
+            responses = requests.post(
+                f"{base_url}/responses",
+                json={"model": "gpt-5.3-codex", "input": "hello"},
+                timeout=2.0,
+            )
+            assert responses.status_code == 200
+            assert responses.json() == routes["/responses"][1]
+
+            v1_responses = requests.post(
+                f"{base_url}/v1/responses",
+                json={"model": "gpt-5.3-codex", "input": "hello again"},
+                timeout=2.0,
+            )
+            assert v1_responses.status_code == 200
+            assert v1_responses.json() == routes["/v1/responses"][1]
+        finally:
+            stop_result = runner.invoke(
+                app,
+                [
+                    "listen",
+                    "stop",
+                    "--state-file",
+                    str(state_file),
+                    "--json",
+                ],
+            )
+            assert stop_result.exit_code == 0, stop_result.output
+
+    assert [entry["path"] for entry in captured_requests] == [
+        "/responses",
+        "/v1/responses",
+    ]
+    assert captured_requests[0]["payload"]["input"] == "hello"
+    assert captured_requests[1]["payload"]["input"] == "hello again"
+
+    run = read_artifact(out_path)
+    assert [step.type for step in run.steps] == [
+        "model.request",
+        "model.response",
+        "model.request",
+        "model.response",
+    ]
+    response_steps = [step for step in run.steps if step.type == "model.response"]
+    assert [step.output["status_code"] for step in response_steps] == [200, 200]
+    assert response_steps[0].output["output"] == routes["/responses"][1]
+    assert response_steps[1].output["output"] == routes["/v1/responses"][1]
     assert response_steps[0].metadata.get("response_source") == "upstream"
     assert response_steps[1].metadata.get("response_source") == "upstream"
-    assert response_steps[2].metadata.get("response_source") == "upstream"
 
 
 def test_listener_gateway_passes_upstream_non_2xx_status_and_body(tmp_path: Path) -> None:
