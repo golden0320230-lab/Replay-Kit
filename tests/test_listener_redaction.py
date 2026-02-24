@@ -179,3 +179,62 @@ def test_listener_redaction_masks_failure_message_and_scanner_detects_known_leak
     )
     findings = _scan_for_known_secrets(synthetic_leak)
     assert len(findings) == 3
+
+
+def test_listener_redaction_masks_stream_diagnostics_token_like_failure(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-stream-redaction.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    token_like_failure = "header-token-should-not-persist"
+    try:
+        response = requests.post(
+            f"{base_url}/responses",
+            headers={"x-replaykit-fail": token_like_failure},
+            json={"model": "gpt-5.3-codex", "stream": True, "input": "hello"},
+            timeout=2.0,
+        )
+        assert response.status_code == 502
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    response_step = run.steps[-1]
+    assert response_step.type == "model.response"
+    stream_payload = response_step.output["stream"]
+    assert stream_payload["enabled"] is True
+    assert stream_payload["completed"] is False
+    assert stream_payload["diagnostics"]
+    assert stream_payload["diagnostics"][0]["message"] == "[REDACTED]"
+
+    artifact_text = out_path.read_text(encoding="utf-8")
+    assert token_like_failure not in artifact_text
+    assert not _scan_for_known_secrets(artifact_text)
