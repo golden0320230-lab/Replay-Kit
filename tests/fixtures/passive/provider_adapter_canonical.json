@@ -1,0 +1,132 @@
+{
+  "anthropic": {
+    "fingerprint": "req-2db29060920fa6f4",
+    "request": {
+      "headers": {
+        "authorization": "Bearer example-auth-header",
+        "x-request-id": "anthropic-xreq-1"
+      },
+      "model": "claude-3-5-sonnet",
+      "path": "/v1/messages",
+      "payload": {
+        "messages": [
+          {
+            "content": "hello",
+            "role": "user"
+          }
+        ],
+        "model": "claude-3-5-sonnet"
+      },
+      "provider": "anthropic",
+      "request_id": "anthropic-req-001",
+      "stream": false
+    },
+    "response": {
+      "assembled_text": "hello",
+      "error": null,
+      "provider": "anthropic",
+      "response": {
+        "content": [
+          {
+            "text": "hello",
+            "type": "text"
+          }
+        ],
+        "id": "msg-upstream-001",
+        "type": "message"
+      },
+      "status_code": 200
+    }
+  },
+  "google": {
+    "fingerprint": "req-ce6320ce89eb201e",
+    "request": {
+      "headers": {
+        "x-trace": "trace-google-001"
+      },
+      "model": "gemini-1.5-flash:generateContent",
+      "path": "/v1beta/models/gemini-1.5-flash:generateContent",
+      "payload": {
+        "contents": [
+          {
+            "parts": [
+              {
+                "text": "hello"
+              }
+            ],
+            "role": "user"
+          }
+        ]
+      },
+      "provider": "google",
+      "request_id": "google-req-001",
+      "stream": false
+    },
+    "response": {
+      "assembled_text": "",
+      "error": {
+        "payload": {
+          "candidates": [],
+          "error": {
+            "message": "upstream unavailable"
+          }
+        },
+        "status_code": 503
+      },
+      "provider": "google",
+      "response": {
+        "candidates": [],
+        "error": {
+          "message": "upstream unavailable"
+        }
+      },
+      "status_code": 503
+    }
+  },
+  "openai": {
+    "fingerprint": "req-1826136628f4acec",
+    "request": {
+      "headers": {
+        "authorization": "Bearer example-auth-header",
+        "x-trace": "trace-001"
+      },
+      "model": "gpt-4o-mini",
+      "path": "/v1/chat/completions",
+      "payload": {
+        "messages": [
+          {
+            "content": "hello",
+            "role": "user"
+          }
+        ],
+        "metadata": {
+          "a": 1,
+          "z": 2
+        },
+        "model": "gpt-4o-mini",
+        "stream": true
+      },
+      "provider": "openai",
+      "request_id": "openai-req-001",
+      "stream": true
+    },
+    "response": {
+      "assembled_text": "hello",
+      "error": null,
+      "provider": "openai",
+      "response": {
+        "choices": [
+          {
+            "message": {
+              "content": "hello",
+              "role": "assistant"
+            }
+          }
+        ],
+        "id": "chatcmpl-upstream-001",
+        "object": "chat.completion"
+      },
+      "status_code": 200
+    }
+  }
+}

@@ -54,8 +54,8 @@ def normalize_provider_request(
     model = _extract_model(provider, payload, path=path)
     stream = bool(payload.get("stream", False))
     normalized_headers = {
-        key.lower(): value
-        for key, value in headers.items()
+        key.lower(): str(value)
+        for key, value in sorted(headers.items(), key=lambda item: str(item[0]).lower())
         if key and key.lower() not in {"content-length", "connection", "host"}
     }
     return ProviderRequest(
@@ -63,7 +63,7 @@ def normalize_provider_request(
         path=path,
         model=model,
         stream=stream,
-        payload=dict(payload),
+        payload=_stable_object_copy(payload),
         headers=normalized_headers,
         request_id=request_id,
     )
@@ -168,7 +168,7 @@ def normalize_provider_response(
     return ProviderResponse(
         provider=provider,
         status_code=status_code,
-        response=dict(payload),
+        response=_stable_object_copy(payload),
         assembled_text=assembled_text,
         error=error_payload,
     )
@@ -182,6 +182,19 @@ def provider_request_fingerprint(request: ProviderRequest) -> str:
         ).encode("utf-8")
     ).hexdigest()
     return f"req-{digest[:16]}"
+
+
+def _stable_object_copy(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_object_copy(val)
+            for key, val in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, list):
+        return [_stable_object_copy(item) for item in value]
+    if isinstance(value, tuple):
+        return [_stable_object_copy(item) for item in value]
+    return value
 
 
 def _extract_model(provider: str, payload: dict[str, Any], *, path: str) -> str | None:

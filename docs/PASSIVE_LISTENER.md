@@ -17,6 +17,12 @@ Passive contract details (provider matrix, streaming semantics, failure semantic
 
 Captured artifacts include canonical `model.request`, `model.response`, `tool.request`, `tool.response`, and `error.event` steps.
 
+Provider adapter normalization guarantees:
+
+- Every provider request/response pair is emitted as `model.request` then `model.response`.
+- Provider payload details are retained with deterministic key ordering for stable replay/diff output.
+- `correlation_id` and `request_id` metadata are propagated on both request and response steps.
+
 ## Commands
 
 Start listener daemon:
