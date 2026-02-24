@@ -996,11 +996,15 @@ def test_listener_gateway_stream_capture_records_ordered_events(tmp_path: Path) 
         stream_payload = step.output["stream"]
         assert stream_payload["enabled"] is True
         assert stream_payload["completed"] is True
+        assert stream_payload["completion_state"] == "completed"
         assert stream_payload["event_count"] > 0
+        assert stream_payload["diagnostics"] == []
         events = stream_payload["events"]
         assert [event["index"] for event in events] == list(
             range(1, len(events) + 1)
         )
+        assert all(event["request_id"] == step.metadata["request_id"] for event in events)
+        assert all(event["correlation_id"] == step.metadata["correlation_id"] for event in events)
         assembled = "".join(event["delta_text"] for event in events)
         assert assembled == step.output["assembled_text"]
 
@@ -1058,8 +1062,11 @@ def test_listener_gateway_stream_failure_marks_incomplete_stream(tmp_path: Path)
     stream_payload = response_step.output["stream"]
     assert stream_payload["enabled"] is True
     assert stream_payload["completed"] is False
+    assert stream_payload["completion_state"] == "incomplete"
     assert stream_payload["event_count"] == 0
     assert stream_payload["events"] == []
+    assert stream_payload["diagnostics"]
+    assert stream_payload["diagnostics"][0]["kind"] == "stream_incomplete"
     assert response_step.output["error"]["type"] == "gateway_error"
 
 
@@ -1116,6 +1123,9 @@ def test_listener_gateway_responses_stream_failure_marks_incomplete_stream(tmp_p
     stream_payload = response_step.output["stream"]
     assert stream_payload["enabled"] is True
     assert stream_payload["completed"] is False
+    assert stream_payload["completion_state"] == "incomplete"
     assert stream_payload["event_count"] == 0
     assert stream_payload["events"] == []
+    assert stream_payload["diagnostics"]
+    assert stream_payload["diagnostics"][0]["kind"] == "stream_incomplete"
     assert response_step.output["error"]["type"] == "gateway_error"
