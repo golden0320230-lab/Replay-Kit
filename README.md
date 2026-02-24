@@ -43,7 +43,7 @@ As of **February 23, 2026**, ReplayKit currently provides:
 - Regression-style `assert` checks with JSON output, optional strict drift checks, and optional slowdown gate thresholds.
 - Redacted bundle export, artifact migration, and HMAC signing/verification for integrity and incident sharing.
 - Snapshot update/assert workflow (`snapshot`) and benchmark workflow (`benchmark`) for repeatable local/CI validation.
-- Local UI (`ui`) with left/right artifact prefill and browser launch support for Git-style run comparisons.
+- Local UI (`ui`) with left/right artifact prefill, listener start/stop controls, default recording folder controls, filesystem browsing, and artifact rename support.
 - Live demo capture mode (`live-demo`) with deterministic fake provider behavior, including optional streaming shape capture.
 - `llm` command group with `providers` and `capture` subcommands for provider-shaped request/response artifacts without target app wrapping.
 - Built-in `llm capture` providers: `fake` (offline deterministic), `openai`, `anthropic`, and `google` (mock-friendly in tests, real-key capable in local runs).
