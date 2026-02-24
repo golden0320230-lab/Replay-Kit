@@ -79,6 +79,40 @@ def _listener_capture_name() -> str:
     return f"ui-listener-capture-{stamp}.rpk"
 
 
+def _resolve_browser_path(base_dir: Path, raw_path: str | None) -> Path:
+    if raw_path:
+        candidate = Path(unquote(raw_path))
+        target = candidate if candidate.is_absolute() else (base_dir / candidate)
+    else:
+        target = base_dir
+    resolved = target.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path not found: {resolved}")
+    if not resolved.is_dir():
+        raise NotADirectoryError(f"Not a directory: {resolved}")
+    return resolved
+
+
+def _list_browser_entries(base_dir: Path, directory: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    children = sorted(
+        directory.iterdir(),
+        key=lambda item: (not item.is_dir(), item.name.lower()),
+    )
+    for child in children:
+        display = _display_path(base_dir, child)
+        entries.append(
+            {
+                "name": child.name,
+                "path": display,
+                "absolute_path": str(child),
+                "is_dir": child.is_dir(),
+                "size_bytes": child.stat().st_size if child.is_file() else None,
+            }
+        )
+    return entries
+
+
 def _run_listener_cli(base_dir: Path, args: list[str]) -> tuple[int, dict[str, Any]]:
     command = [sys.executable, "-m", "replaypack", "listen", *args, "--json"]
     completed = subprocess.run(
@@ -141,6 +175,10 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
                 self._handle_diff(query)
                 return
 
+            if route == "/api/fs/list":
+                self._handle_fs_list(query)
+                return
+
             if route == "/api/listener/status":
                 self._handle_listener_status(query)
                 return
@@ -189,6 +227,22 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             payload = diff.to_dict()
             payload["left_path"] = _display_path(base_dir, left_path)
             payload["right_path"] = _display_path(base_dir, right_path)
+            self._write_json(200, payload)
+
+        def _handle_fs_list(self, query: dict[str, list[str]]) -> None:
+            raw_path = _first(query.get("path"))
+            try:
+                directory = _resolve_browser_path(base_dir, raw_path)
+                parent = directory.parent if directory.parent != directory else None
+                payload = {
+                    "current_path": _display_path(base_dir, directory),
+                    "current_absolute_path": str(directory),
+                    "parent_path": _display_path(base_dir, parent) if parent else None,
+                    "entries": _list_browser_entries(base_dir, directory),
+                }
+            except (FileNotFoundError, NotADirectoryError, OSError, ValueError) as error:
+                self._write_json(400, {"error": str(error)})
+                return
             self._write_json(200, payload)
 
         def _handle_listener_status(self, query: dict[str, list[str]]) -> None:
@@ -718,6 +772,65 @@ def _render_index_html() -> str:
       font-style: italic;
     }
 
+    .browser-toolbar {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      margin-bottom: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .browser-toolbar input[type="text"] {
+      flex: 1 1 280px;
+    }
+
+    .browser-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    .browser-item {
+      padding: 8px 10px;
+      border-bottom: 1px solid #ece8df;
+      display: grid;
+      gap: 6px;
+    }
+
+    .browser-item:last-child {
+      border-bottom: 0;
+    }
+
+    .browser-path {
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      font-size: 0.78rem;
+      word-break: break-word;
+    }
+
+    .browser-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .browser-actions button {
+      border-radius: 8px;
+      padding: 5px 8px;
+      font-size: 0.74rem;
+    }
+
+    .browser-meta {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
     @media (max-width: 1200px) {
       .layout {
         grid-template-columns: 1fr;
@@ -826,6 +939,14 @@ def _render_index_html() -> str:
       <h2 id="metaHeading">Metadata</h2>
       <div class="panel-body">
         <pre id="metaPanel">No diff loaded.</pre>
+        <div class="browser-toolbar">
+          <input id="browserPath" name="browserPath" type="text" placeholder="Browse path (absolute or relative to repo)" />
+          <button id="browserOpenButton" aria-label="Open browser path">Open</button>
+          <button id="browserUpButton" aria-label="Go to parent directory">Up</button>
+          <button id="browserRefreshButton" aria-label="Refresh directory listing">Refresh</button>
+        </div>
+        <ul id="browserList" class="browser-list" aria-label="Filesystem browser list"></ul>
+        <div id="browserEmpty" class="empty">Browse a directory to pick artifact files for left/right inputs.</div>
       </div>
     </section>
   </main>
@@ -837,6 +958,8 @@ def _render_index_html() -> str:
       visibleStepIndexes: [],
       selectedVisibleStepIndex: null,
       selectedChangeIndex: null,
+      browserCurrentPath: "",
+      browserParentPath: "",
     };
 
     const statusEl = document.getElementById("status");
@@ -854,6 +977,12 @@ def _render_index_html() -> str:
     const rightTree = document.getElementById("rightTree");
     const metaPanel = document.getElementById("metaPanel");
     const selectedPath = document.getElementById("selectedPath");
+    const browserPathInput = document.getElementById("browserPath");
+    const browserList = document.getElementById("browserList");
+    const browserEmpty = document.getElementById("browserEmpty");
+    const browserOpenButton = document.getElementById("browserOpenButton");
+    const browserUpButton = document.getElementById("browserUpButton");
+    const browserRefreshButton = document.getElementById("browserRefreshButton");
     const jumpButton = document.getElementById("jumpButton");
     const prevStepButton = document.getElementById("prevStepButton");
     const nextStepButton = document.getElementById("nextStepButton");
@@ -921,6 +1050,104 @@ def _render_index_html() -> str:
         }
       } catch (_err) {
         setStatus("Failed to load local artifact list.", true);
+      }
+    }
+
+    function formatBytes(value) {
+      if (value === null || value === undefined) {
+        return "-";
+      }
+      if (value < 1024) {
+        return value + " B";
+      }
+      if (value < 1024 * 1024) {
+        return (value / 1024).toFixed(1) + " KiB";
+      }
+      return (value / (1024 * 1024)).toFixed(1) + " MiB";
+    }
+
+    function setArtifactFromBrowser(side, path) {
+      if (side === "left") {
+        leftInput.value = path;
+      } else {
+        rightInput.value = path;
+      }
+      setStatus("Set " + side + " artifact path from browser: " + path);
+    }
+
+    function renderBrowserEntries(entries) {
+      browserList.innerHTML = "";
+      if (!entries || entries.length === 0) {
+        browserEmpty.style.display = "block";
+        return;
+      }
+      browserEmpty.style.display = "none";
+
+      entries.forEach((entry) => {
+        const item = document.createElement("li");
+        item.className = "browser-item";
+
+        const pathLine = document.createElement("div");
+        pathLine.className = "browser-path";
+        pathLine.textContent = entry.is_dir ? ("[dir] " + entry.path) : entry.path;
+        item.appendChild(pathLine);
+
+        const metaLine = document.createElement("div");
+        metaLine.className = "browser-meta";
+        metaLine.textContent = entry.is_dir ? "directory" : ("file • " + formatBytes(entry.size_bytes));
+        item.appendChild(metaLine);
+
+        const actions = document.createElement("div");
+        actions.className = "browser-actions";
+
+        if (entry.is_dir) {
+          const openButton = document.createElement("button");
+          openButton.type = "button";
+          openButton.textContent = "Open";
+          openButton.addEventListener("click", () => browseDirectory(entry.path));
+          actions.appendChild(openButton);
+        } else {
+          const isArtifact = entry.path.endsWith(".rpk") || entry.path.endsWith(".bundle");
+
+          const leftButton = document.createElement("button");
+          leftButton.type = "button";
+          leftButton.textContent = "Use Left";
+          leftButton.disabled = !isArtifact;
+          leftButton.addEventListener("click", () => setArtifactFromBrowser("left", entry.path));
+          actions.appendChild(leftButton);
+
+          const rightButton = document.createElement("button");
+          rightButton.type = "button";
+          rightButton.textContent = "Use Right";
+          rightButton.disabled = !isArtifact;
+          rightButton.addEventListener("click", () => setArtifactFromBrowser("right", entry.path));
+          actions.appendChild(rightButton);
+        }
+        item.appendChild(actions);
+        browserList.appendChild(item);
+      });
+    }
+
+    async function browseDirectory(path) {
+      const query = new URLSearchParams();
+      const target = (path || browserPathInput.value || "").trim();
+      if (target) {
+        query.set("path", target);
+      }
+      try {
+        const res = await fetch("/api/fs/list" + (query.toString() ? ("?" + query.toString()) : ""));
+        const payload = await res.json();
+        if (!res.ok) {
+          setStatus(payload.error || "Filesystem browse failed.", true);
+          return;
+        }
+        state.browserCurrentPath = payload.current_path || "";
+        state.browserParentPath = payload.parent_path || "";
+        browserPathInput.value = state.browserCurrentPath || payload.current_absolute_path || "";
+        browserUpButton.disabled = !state.browserParentPath;
+        renderBrowserEntries(payload.entries || []);
+      } catch (_err) {
+        setStatus("Unable to fetch filesystem browser listing.", true);
       }
     }
 
@@ -1515,10 +1742,25 @@ def _render_index_html() -> str:
     nextFieldButton.addEventListener("click", () => changeNav(1));
     copyPathButton.addEventListener("click", copySelectedPath);
     changedOnlyToggle.addEventListener("change", applyStepFilter);
+    browserOpenButton.addEventListener("click", () => browseDirectory(browserPathInput.value));
+    browserUpButton.addEventListener("click", () => {
+      if (state.browserParentPath) {
+        browseDirectory(state.browserParentPath);
+      }
+    });
+    browserRefreshButton.addEventListener("click", () => browseDirectory(state.browserCurrentPath || browserPathInput.value));
+    browserPathInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        browseDirectory(browserPathInput.value);
+      }
+    });
 
     parseQueryDefaults();
     loadArtifactOptions();
     refreshListenerStatus();
+    browserUpButton.disabled = true;
+    browseDirectory("");
   </script>
 </body>
 </html>
