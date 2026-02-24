@@ -653,6 +653,20 @@ def listen_stop(
         time.sleep(0.05)
 
     if is_pid_running(pid):
+        # If graceful shutdown is stuck, escalate once to avoid flaky lingering
+        # daemon processes during short-lived test sessions.
+        if os.name != "nt" and pid != os.getpid():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            kill_deadline = time.time() + 1.0
+            while time.time() < kill_deadline:
+                if not is_pid_running(pid):
+                    break
+                time.sleep(0.05)
+
+    if is_pid_running(pid):
         message = "listener stop failed: timeout waiting for daemon exit."
         payload = {
             "status": "error",

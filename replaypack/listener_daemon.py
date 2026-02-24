@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover - dependency is required in production/t
 from replaypack.artifact import write_artifact
 from replaypack.core.models import Run, Step
 from replaypack.listener_gateway import (
+    ProviderResponse,
     build_best_effort_fallback_response,
     build_openai_models_payload,
     build_provider_response,
@@ -286,16 +287,12 @@ class _ListenerRunRecorder:
                         "assembled_text": redact_listener_value(
                             normalized_response.assembled_text
                         ),
-                        "stream": {
-                            "enabled": bool(normalized_response.stream),
-                            "completed": bool(
-                                normalized_response.stream and status_code < 400
-                            ),
-                            "event_count": len(normalized_response.stream_events or []),
-                            "events": redact_listener_value(
-                                normalized_response.stream_events or []
-                            ),
-                        },
+                        "stream": self._stream_payload(
+                            request_id=request.request_id,
+                            correlation_id=correlation_id,
+                            normalized_response=normalized_response,
+                            status_code=status_code,
+                        ),
                         "error": redact_listener_value(normalized_response.error),
                     },
                     metadata=redact_listener_value(
@@ -313,6 +310,52 @@ class _ListenerRunRecorder:
             )
             self._persist_locked()
             return status_code, response_payload
+
+    def _stream_payload(
+        self,
+        *,
+        request_id: str,
+        correlation_id: str,
+        normalized_response: ProviderResponse,
+        status_code: int,
+    ) -> dict[str, Any]:
+        events: list[dict[str, Any]] = []
+        for event in normalized_response.stream_events or []:
+            if not isinstance(event, dict):
+                continue
+            event_payload = dict(event)
+            event_payload["request_id"] = request_id
+            event_payload["correlation_id"] = correlation_id
+            events.append(event_payload)
+
+        stream_enabled = bool(normalized_response.stream)
+        stream_completed = bool(stream_enabled and status_code < 400)
+        completion_state = "completed" if stream_completed else "incomplete"
+        if not stream_enabled:
+            completion_state = "not_streaming"
+
+        diagnostics: list[dict[str, Any]] = []
+        if stream_enabled and not stream_completed:
+            diagnostics.append(
+                {
+                    "kind": "stream_incomplete",
+                    "message": (
+                        str((normalized_response.error or {}).get("message")).strip()
+                        if isinstance(normalized_response.error, dict)
+                        and (normalized_response.error or {}).get("message")
+                        else "stream capture did not complete",
+                    ),
+                }
+            )
+
+        return {
+            "enabled": stream_enabled,
+            "completed": stream_completed,
+            "completion_state": completion_state,
+            "event_count": len(events),
+            "events": redact_listener_value(events),
+            "diagnostics": redact_listener_value(diagnostics),
+        }
 
     def record_agent_payload(
         self,
