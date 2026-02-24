@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import gzip
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,12 @@ from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import parse_qsl, urlsplit
+import zlib
+
+try:
+    import zstandard as zstd
+except ImportError:  # pragma: no cover - dependency is required in production/test envs
+    zstd = None
 
 from replaypack.artifact import write_artifact
 from replaypack.core.models import Run, Step
@@ -627,7 +634,14 @@ class _ListenerHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length) if length > 0 else b""
         if not body:
             return {}, None
-        decoded = body.decode("utf-8", errors="replace")
+        decoded_body, decode_error = _decode_request_body(
+            body=body,
+            content_encoding=self.headers.get("Content-Encoding"),
+        )
+        if decode_error:
+            return {"raw_body": body.decode("utf-8", errors="replace")}, decode_error
+
+        decoded = decoded_body.decode("utf-8", errors="replace")
         try:
             parsed = json.loads(decoded)
         except json.JSONDecodeError:
@@ -693,6 +707,38 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
     )
     return parser
+
+
+def _decode_request_body(*, body: bytes, content_encoding: str | None) -> tuple[bytes, str | None]:
+    if not content_encoding:
+        return body, None
+    encodings = [entry.strip().lower() for entry in content_encoding.split(",") if entry.strip()]
+    if not encodings:
+        return body, None
+
+    decoded = body
+    for encoding in reversed(encodings):
+        try:
+            if encoding == "identity":
+                continue
+            if encoding == "gzip":
+                decoded = gzip.decompress(decoded)
+                continue
+            if encoding == "deflate":
+                try:
+                    decoded = zlib.decompress(decoded)
+                except zlib.error:
+                    decoded = zlib.decompress(decoded, -zlib.MAX_WBITS)
+                continue
+            if encoding == "zstd":
+                if zstd is None:
+                    return body, "unsupported_content_encoding:zstd"
+                decoded = zstd.ZstdDecompressor().decompress(decoded)
+                continue
+        except (OSError, zlib.error, ValueError):
+            return body, f"invalid_content_encoding:{encoding}"
+        return body, f"unsupported_content_encoding:{encoding}"
+    return decoded, None
 
 
 def _runtime_payload(
