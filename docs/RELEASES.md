@@ -64,6 +64,11 @@ Recommended flow:
 2. Cut and push tag (`vX.Y.Z`).
 3. Publish release notes via `gh release create`.
 
+## Passive Mode Release Gate
+
+Passive listener/interceptor releases must satisfy
+`docs/PASSIVE_MODE_RELEASE_CHECKLIST.md` before tagging.
+
 ## Verify Post-Release
 
 ```bash

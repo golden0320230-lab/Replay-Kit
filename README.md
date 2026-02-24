@@ -99,6 +99,9 @@ Routing exports from `listen env` include provider base URLs and agent event end
 Operator runbook with verification, streaming notes, and recovery steps:
 `docs/PASSIVE_LISTENER.md`
 
+Passive-mode release sign-off criteria are tracked in
+`docs/PASSIVE_MODE_RELEASE_CHECKLIST.md`.
+
 ## Installation
 
 Install from source (current workflow):
