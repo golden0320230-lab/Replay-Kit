@@ -30,6 +30,7 @@ from replaypack.artifact import write_artifact
 from replaypack.core.models import Run, Step
 from replaypack.listener_gateway import (
     build_best_effort_fallback_response,
+    build_openai_models_payload,
     build_provider_response,
     detect_provider,
     normalize_provider_request,
@@ -55,27 +56,6 @@ _UPSTREAM_ENV_BY_PROVIDER = {
 _UPSTREAM_ENV_FALLBACK = "REPLAYKIT_PROVIDER_UPSTREAM_URL"
 _UPSTREAM_TIMEOUT_ENV = "REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS"
 _UPSTREAM_DEFAULT_TIMEOUT_SECONDS = 5.0
-
-
-def _openai_models_payload() -> dict[str, Any]:
-    now = int(time.time())
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": "gpt-5.3-codex",
-                "object": "model",
-                "created": now,
-                "owned_by": "openai",
-            },
-            {
-                "id": "gpt-4o-mini",
-                "object": "model",
-                "created": now,
-                "owned_by": "openai",
-            },
-        ],
-    }
 
 
 def _resolve_provider_upstream_base_url(provider: str) -> str | None:
@@ -231,7 +211,8 @@ class _ListenerRunRecorder:
                 )
             else:
                 upstream_base_url = _resolve_provider_upstream_base_url(provider)
-                if upstream_base_url:
+                supports_upstream_forward = path not in {"/models", "/v1/models"}
+                if upstream_base_url and supports_upstream_forward:
                     response_source = "upstream"
                     (
                         status_code,
@@ -503,7 +484,38 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             self._write_json(503, {"status": "error", "message": "recorder not ready"})
             return
         if parsed.path in {"/models", "/v1/models"}:
-            self._write_json(200, _openai_models_payload())
+            try:
+                status_code, response_body = recorder.record_provider_transaction(
+                    provider="openai",
+                    path=parsed.path,
+                    query_params={
+                        key: value
+                        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+                    },
+                    payload={},
+                    headers={str(key): str(value) for key, value in self.headers.items()},
+                    fail_reason=None,
+                )
+            except Exception as error:
+                capture_error_count = self.server.register_capture_error()
+                degraded_sequence = self.server.register_degraded_response()
+                recorder.record_internal_error(
+                    category="capture_failure",
+                    message="listener capture path failed; served degraded fallback response",
+                    details={
+                        "provider": "openai",
+                        "path": parsed.path,
+                        "error": str(error),
+                        "capture_error_count": capture_error_count,
+                    },
+                )
+                status_code, response_body = build_best_effort_fallback_response(
+                    provider="openai",
+                    sequence=degraded_sequence,
+                )
+                if status_code == 200:
+                    response_body = build_openai_models_payload()
+            self._write_json(status_code, response_body)
             return
         if parsed.path == "/health":
             self._write_json(

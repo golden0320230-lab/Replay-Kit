@@ -8,6 +8,7 @@ from typing import Any
 
 
 _SUPPORTED_PROVIDERS = ("openai", "anthropic", "google")
+_OPENAI_MODELS_CREATED_UNIX = 1735689600
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,8 @@ class ProviderResponse:
 
 def detect_provider(path: str) -> str | None:
     normalized = path.strip()
+    if normalized in {"/models", "/v1/models"}:
+        return "openai"
     if normalized in {"/responses", "/v1/responses"}:
         return "openai"
     if normalized == "/v1/chat/completions":
@@ -101,7 +104,9 @@ def build_provider_response(
 
     text = "ReplayKit listener response"
     if request.provider == "openai":
-        if request.path in {"/responses", "/v1/responses"}:
+        if request.path in {"/models", "/v1/models"}:
+            response = build_openai_models_payload()
+        elif request.path in {"/responses", "/v1/responses"}:
             response = {
                 "id": f"resp-listener-{sequence:06d}",
                 "object": "response",
@@ -154,6 +159,26 @@ def build_provider_response(
         stream=request.stream,
     )
     return 200, response, normalized
+
+
+def build_openai_models_payload() -> dict[str, Any]:
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "gpt-5.3-codex",
+                "object": "model",
+                "created": _OPENAI_MODELS_CREATED_UNIX,
+                "owned_by": "openai",
+            },
+            {
+                "id": "gpt-4o-mini",
+                "object": "model",
+                "created": _OPENAI_MODELS_CREATED_UNIX,
+                "owned_by": "openai",
+            },
+        ],
+    }
 
 
 def build_best_effort_fallback_response(
