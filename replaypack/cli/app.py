@@ -3,6 +3,7 @@ from importlib.metadata import PackageNotFoundError, version as package_version
 import os
 from pathlib import Path
 import runpy
+import shutil
 import signal
 import socket
 import subprocess
@@ -80,9 +81,11 @@ from replaypack.llm_capture import (
 )
 from replaypack.listener_state import (
     default_listener_state_path,
+    default_transparent_state_path,
     is_pid_running,
     load_listener_state,
     remove_listener_state,
+    write_listener_state,
 )
 from replaypack.providers import list_provider_adapter_keys
 from replaypack.snapshot import (
@@ -96,9 +99,13 @@ app = typer.Typer(help="ReplayKit CLI")
 llm_app = typer.Typer(help="Capture provider request/response flows.")
 agent_app = typer.Typer(help="Capture coding-agent sessions.")
 listen_app = typer.Typer(help="Passive listener daemon lifecycle commands.")
+listen_transparent_app = typer.Typer(
+    help="Transparent background listener controls (macOS MVP scaffolding)."
+)
 app.add_typer(llm_app, name="llm")
 app.add_typer(agent_app, name="agent")
 app.add_typer(listen_app, name="listen")
+listen_app.add_typer(listen_transparent_app, name="transparent")
 
 
 @dataclass(slots=True)
@@ -845,6 +852,407 @@ def listen_env(
         ]
 
     _echo("\n".join(lines), force=True)
+
+
+def _transparent_platform_name() -> str:
+    return sys.platform
+
+
+def _transparent_command_exists(command: str) -> bool:
+    return shutil.which(command) is not None
+
+
+def _transparent_effective_uid() -> int | None:
+    getter = getattr(os, "geteuid", None)
+    if getter is None:
+        return None
+    try:
+        return int(getter())
+    except OSError:
+        return None
+
+
+def _transparent_state_parent_writable(state_path: Path) -> bool:
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return os.access(state_path.parent, os.W_OK)
+
+
+def _transparent_check_payload(
+    *,
+    check_id: str,
+    ok: bool,
+    required: bool,
+    message: str,
+) -> dict[str, Any]:
+    if required:
+        status = "pass" if ok else "fail"
+    elif ok:
+        status = "pass"
+    else:
+        status = "warn"
+    return {
+        "id": check_id,
+        "required": required,
+        "ok": ok,
+        "status": status,
+        "message": message,
+    }
+
+
+def _transparent_doctor_payload(state_path: Path) -> dict[str, Any]:
+    platform_name = _transparent_platform_name()
+    checks: list[dict[str, Any]] = []
+
+    platform_ok = platform_name == "darwin"
+    checks.append(
+        _transparent_check_payload(
+            check_id="platform.macos",
+            ok=platform_ok,
+            required=True,
+            message=(
+                "platform is macOS"
+                if platform_ok
+                else f"macOS required for transparent MVP (detected {platform_name})"
+            ),
+        )
+    )
+
+    for binary in ("pfctl", "security", "networksetup"):
+        exists = _transparent_command_exists(binary)
+        checks.append(
+            _transparent_check_payload(
+                check_id=f"binary.{binary}",
+                ok=exists,
+                required=platform_ok,
+                message=(
+                    f"found required binary '{binary}'"
+                    if exists
+                    else f"missing required binary '{binary}'"
+                ),
+            )
+        )
+
+    uid = _transparent_effective_uid()
+    if uid is None:
+        root_ok = False
+        root_message = "effective uid unavailable on this platform"
+    elif uid == 0:
+        root_ok = True
+        root_message = "running with root privileges"
+    else:
+        root_ok = False
+        root_message = (
+            "not running as root; root will be required when OS interception is enabled"
+        )
+    checks.append(
+        _transparent_check_payload(
+            check_id="privilege.root",
+            ok=root_ok,
+            required=False,
+            message=root_message,
+        )
+    )
+
+    writable = _transparent_state_parent_writable(state_path)
+    checks.append(
+        _transparent_check_payload(
+            check_id="state_path.writable",
+            ok=writable,
+            required=True,
+            message=(
+                f"state directory is writable: {state_path.parent}"
+                if writable
+                else f"state directory is not writable: {state_path.parent}"
+            ),
+        )
+    )
+
+    required_failures = [check for check in checks if check["required"] and not check["ok"]]
+    ready = not required_failures
+    return {
+        "status": "ok" if ready else "error",
+        "exit_code": 0 if ready else 1,
+        "message": (
+            "transparent doctor checks passed"
+            if ready
+            else "transparent doctor detected unmet required checks"
+        ),
+        "artifact_path": None,
+        "mode": "transparent",
+        "mvp_platform": "macos",
+        "ready": ready,
+        "state_file": str(state_path),
+        "checks": checks,
+    }
+
+
+@listen_transparent_app.command("doctor")
+def listen_transparent_doctor(
+    state_file: Path = typer.Option(
+        default_transparent_state_path(),
+        "--state-file",
+        help="Path to transparent listener state file.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable transparent readiness payload.",
+    ),
+) -> None:
+    """Validate transparent-mode prerequisites without mutating system state."""
+    payload = _transparent_doctor_payload(Path(state_file))
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(payload["message"])
+        for check in payload["checks"]:
+            _echo(f"[{check['status']}] {check['id']}: {check['message']}")
+    if payload["exit_code"] != 0:
+        raise typer.Exit(code=int(payload["exit_code"]))
+
+
+@listen_transparent_app.command("start")
+def listen_transparent_start(
+    state_file: Path = typer.Option(
+        default_transparent_state_path(),
+        "--state-file",
+        help="Path to transparent listener state file.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable transparent listener status.",
+    ),
+) -> None:
+    """Start transparent-mode scaffolding session (macOS MVP)."""
+    state_path = Path(state_file)
+    if _transparent_platform_name() != "darwin":
+        message = "listen transparent start failed: macOS required for transparent MVP."
+        payload = {
+            "status": "error",
+            "exit_code": 2,
+            "message": message,
+            "artifact_path": None,
+            "mode": "transparent",
+            "mvp_platform": "macos",
+            "state_file": str(state_path),
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    raw_state = load_listener_state(state_path)
+    if raw_state is not None:
+        raw_mode = str(raw_state.get("mode", "")).strip().lower()
+        raw_status = str(raw_state.get("status", "")).strip().lower()
+        if raw_mode != "transparent":
+            message = (
+                "listen transparent start failed: state file is owned by passive listener mode."
+            )
+            payload = {
+                "status": "error",
+                "exit_code": 2,
+                "message": message,
+                "artifact_path": None,
+                "mode": "transparent",
+                "state_file": str(state_path),
+            }
+            if json_output:
+                _echo_json(payload)
+            else:
+                _echo(message, err=True)
+            raise typer.Exit(code=2)
+        if raw_status == "running":
+            message = "listen transparent start failed: transparent listener is already running."
+            payload = {
+                "status": "error",
+                "exit_code": 2,
+                "message": message,
+                "artifact_path": None,
+                "mode": "transparent",
+                "state_file": str(state_path),
+                "listener_session_id": raw_state.get("listener_session_id"),
+            }
+            if json_output:
+                _echo_json(payload)
+            else:
+                _echo(message, err=True)
+            raise typer.Exit(code=2)
+
+    session_id = f"transparent-{int(time.time() * 1000)}"
+    write_listener_state(
+        state_path,
+        {
+            "status": "running",
+            "mode": "transparent",
+            "listener_session_id": session_id,
+            "mvp_platform": "macos",
+            "backend": "macos-mvp-scaffold",
+            "phase": "contract-scaffolding",
+            "pid": 0,
+            "rollback_handles": [],
+            "started_at_unix_ms": int(time.time() * 1000),
+        },
+    )
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "transparent listener started (scaffold)",
+        "artifact_path": None,
+        "mode": "transparent",
+        "mvp_platform": "macos",
+        "state_file": str(state_path),
+        "listener_session_id": session_id,
+        "running": True,
+        "backend": "macos-mvp-scaffold",
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(payload["message"])
+
+
+@listen_transparent_app.command("status")
+def listen_transparent_status(
+    state_file: Path = typer.Option(
+        default_transparent_state_path(),
+        "--state-file",
+        help="Path to transparent listener state file.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable transparent listener status.",
+    ),
+) -> None:
+    """Inspect transparent-mode scaffolding status (macOS MVP)."""
+    state_path = Path(state_file)
+    raw_state = load_listener_state(state_path)
+    if raw_state is None:
+        payload = {
+            "status": "ok",
+            "exit_code": 0,
+            "message": "transparent listener is stopped",
+            "artifact_path": None,
+            "mode": "transparent",
+            "state_file": str(state_path),
+            "running": False,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(payload["message"])
+        return
+
+    raw_mode = str(raw_state.get("mode", "")).strip().lower()
+    if raw_mode != "transparent":
+        message = "listen transparent status failed: state file belongs to passive listener mode."
+        payload = {
+            "status": "error",
+            "exit_code": 2,
+            "message": message,
+            "artifact_path": None,
+            "mode": "transparent",
+            "state_file": str(state_path),
+            "running": False,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    running = str(raw_state.get("status", "")).strip().lower() == "running"
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "transparent listener is running" if running else "transparent listener is stopped",
+        "artifact_path": None,
+        "mode": "transparent",
+        "mvp_platform": "macos",
+        "state_file": str(state_path),
+        "running": running,
+        "listener_session_id": raw_state.get("listener_session_id"),
+        "backend": raw_state.get("backend"),
+        "phase": raw_state.get("phase"),
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(payload["message"])
+
+
+@listen_transparent_app.command("stop")
+def listen_transparent_stop(
+    state_file: Path = typer.Option(
+        default_transparent_state_path(),
+        "--state-file",
+        help="Path to transparent listener state file.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable transparent listener status.",
+    ),
+) -> None:
+    """Stop transparent-mode scaffolding session (macOS MVP)."""
+    state_path = Path(state_file)
+    raw_state = load_listener_state(state_path)
+    if raw_state is None:
+        payload = {
+            "status": "ok",
+            "exit_code": 0,
+            "message": "transparent listener already stopped",
+            "artifact_path": None,
+            "mode": "transparent",
+            "state_file": str(state_path),
+            "running": False,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(payload["message"])
+        return
+
+    raw_mode = str(raw_state.get("mode", "")).strip().lower()
+    if raw_mode != "transparent":
+        message = "listen transparent stop failed: state file belongs to passive listener mode."
+        payload = {
+            "status": "error",
+            "exit_code": 2,
+            "message": message,
+            "artifact_path": None,
+            "mode": "transparent",
+            "state_file": str(state_path),
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=2)
+
+    session_id = raw_state.get("listener_session_id")
+    remove_listener_state(state_path)
+    payload = {
+        "status": "ok",
+        "exit_code": 0,
+        "message": "transparent listener stopped",
+        "artifact_path": None,
+        "mode": "transparent",
+        "mvp_platform": "macos",
+        "state_file": str(state_path),
+        "listener_session_id": session_id,
+        "running": False,
+    }
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(payload["message"])
 
 
 @app.command(

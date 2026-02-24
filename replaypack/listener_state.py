@@ -16,6 +16,10 @@ def default_listener_state_path() -> Path:
     return Path("runs/listener/state.json")
 
 
+def default_transparent_state_path() -> Path:
+    return Path("runs/listener/transparent-state.json")
+
+
 def load_listener_state(path: str | Path) -> dict[str, Any] | None:
     target = Path(path)
     if not target.exists():
