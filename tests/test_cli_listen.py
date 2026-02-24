@@ -108,6 +108,55 @@ def test_cli_listen_status_cleans_stale_pid_state(tmp_path: Path) -> None:
     assert not state_file.exists()
 
 
+def test_cli_listen_start_cleans_stale_pid_state(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    stale_pid = 999999
+    state_file.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "listener_session_id": "listener-stale-start-001",
+                "pid": stale_pid,
+                "host": "127.0.0.1",
+                "port": 9011,
+                "artifact_path": str(tmp_path / "stale.rpk"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    start = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert start.exit_code == 0, start.output
+    payload = json.loads(start.stdout.strip())
+    assert payload["status"] == "ok"
+    assert payload["stale_cleanup"] is True
+    assert payload["pid"] > 0
+    assert payload["pid"] != stale_pid
+    assert payload["listener_session_id"] != "listener-stale-start-001"
+
+    stop = runner.invoke(
+        app,
+        [
+            "listen",
+            "stop",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert stop.exit_code == 0, stop.output
+
+
 def test_cli_listen_start_rejects_port_conflict(tmp_path: Path) -> None:
     runner = CliRunner()
     state_file = tmp_path / "listener-state.json"

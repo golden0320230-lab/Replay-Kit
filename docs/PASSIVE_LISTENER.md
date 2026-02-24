@@ -45,6 +45,13 @@ replaykit listen env --shell powershell
 replaykit listen env --json
 ```
 
+Lifecycle behavior:
+
+- `listen start` auto-cleans stale state files when the recorded PID is no longer running.
+- `listen status` reports `running=false` and `stale_cleanup=true` after stale-state recovery.
+- `listen stop` is idempotent and safe to call repeatedly.
+- `listen env` output is deterministic and copy/paste-safe for both bash and PowerShell.
+
 ## Typical Workflow
 
 1. Start listener:
