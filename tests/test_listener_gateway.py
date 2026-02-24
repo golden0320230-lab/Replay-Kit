@@ -80,6 +80,59 @@ def test_listener_gateway_detect_provider_paths() -> None:
     assert detect_provider("/v1/unknown") is None
 
 
+def test_listener_gateway_serves_openai_models_routes(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        models = requests.get(
+            f"{base_url}/models",
+            params={"client_version": "0.104.0"},
+            timeout=2.0,
+        )
+        assert models.status_code == 200
+        payload = models.json()
+        assert payload["object"] == "list"
+        model_ids = {item["id"] for item in payload["data"]}
+        assert "gpt-5.3-codex" in model_ids
+
+        v1_models = requests.get(f"{base_url}/v1/models", timeout=2.0)
+        assert v1_models.status_code == 200
+        assert v1_models.json()["object"] == "list"
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    assert run.steps == []
+
+
 def test_listener_gateway_captures_openai_anthropic_google_steps(tmp_path: Path) -> None:
     runner = CliRunner()
     state_file = tmp_path / "listener-state.json"
