@@ -49,6 +49,27 @@ _UPSTREAM_TIMEOUT_ENV = "REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS"
 _UPSTREAM_DEFAULT_TIMEOUT_SECONDS = 5.0
 
 
+def _openai_models_payload() -> dict[str, Any]:
+    now = int(time.time())
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "gpt-5.3-codex",
+                "object": "model",
+                "created": now,
+                "owned_by": "openai",
+            },
+            {
+                "id": "gpt-4o-mini",
+                "object": "model",
+                "created": now,
+                "owned_by": "openai",
+            },
+        ],
+    }
+
+
 def _resolve_provider_upstream_base_url(provider: str) -> str | None:
     env_keys = [_UPSTREAM_ENV_BY_PROVIDER.get(provider), _UPSTREAM_ENV_FALLBACK]
     for env_key in env_keys:
@@ -472,6 +493,9 @@ class _ListenerHandler(BaseHTTPRequestHandler):
         recorder = self.server.recorder
         if recorder is None:
             self._write_json(503, {"status": "error", "message": "recorder not ready"})
+            return
+        if parsed.path in {"/models", "/v1/models"}:
+            self._write_json(200, _openai_models_payload())
             return
         if parsed.path == "/health":
             self._write_json(
