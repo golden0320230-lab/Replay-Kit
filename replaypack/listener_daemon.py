@@ -343,7 +343,7 @@ class _ListenerRunRecorder:
                         str((normalized_response.error or {}).get("message")).strip()
                         if isinstance(normalized_response.error, dict)
                         and (normalized_response.error or {}).get("message")
-                        else "stream capture did not complete",
+                        else "stream capture did not complete"
                     ),
                 }
             )
