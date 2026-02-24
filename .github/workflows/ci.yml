@@ -85,6 +85,17 @@ jobs:
           python ci/passive_listener_golden_path.py
           echo "Passive listener golden path completed (runs/passive/*)."
 
+      - name: Passive Listener Network-Off Replay Guard
+        run: |
+          python ci/passive_listener_network_off_replay_guard.py
+          python -m replaypack assert runs/passive/listener-replay-network-off.rpk --candidate runs/passive/listener-replay-network-off.rpk --json > runs/passive/listener-network-off-assert.json
+          echo "Passive network-off replay guard completed (runs/passive/listener-replay-network-off.rpk)."
+
+      - name: Passive Listener Cleanup/Leak Regression Guard
+        run: |
+          python -m pytest -q tests/test_listener_cleanup_regression.py
+          python -m pytest -q tests/test_cli_record_leak_proofing.py
+
       - name: Replay Assertion
         run: |
           python -c "from pathlib import Path; Path('runs').mkdir(parents=True, exist_ok=True)"
