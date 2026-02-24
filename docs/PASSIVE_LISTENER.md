@@ -105,6 +105,31 @@ Behavior:
 - Upstream non-2xx responses are passed through with provider response shape preserved.
 - Upstream timeout/transport errors return `502` with `listener_gateway_error` payload and are captured in artifact steps.
 
+## Operator Checklist
+
+Use this checklist when running passive mode manually:
+
+1. Start listener with explicit state and output paths.
+2. Run `listen status --json` and confirm:
+   - `running: true`
+   - `health.status: "ok"`
+3. Print exports with `listen env` and route your app/agent to listener URLs.
+4. Execute at least one provider call and one agent event sequence.
+5. Stop listener and verify artifact exists:
+   - `runs/passive/capture.rpk`
+6. Run deterministic validation:
+   - `replaykit replay runs/passive/capture.rpk --out runs/passive/replay.rpk --seed 19 --fixed-clock 2026-02-23T00:00:00Z`
+   - `replaykit assert runs/passive/replay.rpk --candidate runs/passive/replay.rpk --json`
+
+If any checklist item fails, use the recovery playbook below before re-running.
+
+## Streaming Notes and Limits
+
+- Provider requests with `stream: true` are captured as normal passive gateway traffic.
+- Passive listener preserves request order and correlation metadata, then records deterministic `model.*` steps for replay/diff.
+- Streaming capture is best-effort: if malformed frames are encountered, they are dropped and reflected in `dropped_events`.
+- Replay remains stub/offline for captured artifacts; passive mode is for debugging determinism and divergence, not live stream rehydration.
+
 ## Health and Failure Isolation
 
 `listen status --json` includes `health.metrics`:
@@ -154,3 +179,33 @@ For provider requests with `stream=true`, passive listener artifacts store:
   - Verify agent payload is JSON object/list/JSONL with expected `type` fields.
 - `capture_errors` increasing:
   - Inspect `error.event` steps in artifact and check CI/uploaded logs under `runs/passive`.
+
+## Recovery Playbook
+
+When passive mode enters a bad state, run this sequence:
+
+1. Hard stop listener session:
+
+```bash
+replaykit listen stop --state-file runs/passive/state.json --json
+```
+
+2. Verify listener is fully down:
+
+```bash
+replaykit listen status --state-file runs/passive/state.json --json
+```
+
+3. Start a fresh session with a new output artifact path:
+
+```bash
+replaykit listen start --state-file runs/passive/state.json --out runs/passive/recover-capture.rpk --json
+```
+
+4. Re-run minimal probe traffic (one provider request, one agent event payload), then stop.
+
+5. Validate resulting artifact before continuing:
+
+```bash
+replaykit assert runs/passive/recover-capture.rpk --candidate runs/passive/recover-capture.rpk --json
+```

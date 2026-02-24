@@ -96,6 +96,9 @@ replaykit listen stop --state-file runs/passive/state.json --json
 
 Routing exports from `listen env` include provider base URLs and agent event endpoints. No API keys are emitted.
 
+Operator runbook with verification, streaming notes, and recovery steps:
+`docs/PASSIVE_LISTENER.md`
+
 ## Installation
 
 Install from source (current workflow):
