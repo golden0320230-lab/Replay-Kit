@@ -134,5 +134,54 @@
       "stream": false,
       "stream_events": []
     }
+  },
+  "openai_responses": {
+    "fingerprint": "req-9370a3e7e738d2e9",
+    "request": {
+      "headers": {
+        "authorization": "Bearer example-auth-header",
+        "x-trace": "trace-responses-001"
+      },
+      "model": "gpt-5.3-codex",
+      "path": "/responses",
+      "payload": {
+        "input": "say hello",
+        "metadata": {
+          "session": "codex"
+        },
+        "model": "gpt-5.3-codex"
+      },
+      "provider": "openai",
+      "request_id": "openai-responses-req-001",
+      "stream": false
+    },
+    "response": {
+      "assembled_text": "hello from responses",
+      "error": null,
+      "provider": "openai",
+      "response": {
+        "id": "resp-upstream-001",
+        "model": "gpt-5.3-codex",
+        "object": "response",
+        "output": [
+          {
+            "content": [
+              {
+                "text": "hello from responses",
+                "type": "output_text"
+              }
+            ],
+            "id": "msg-upstream-001",
+            "role": "assistant",
+            "status": "completed",
+            "type": "message"
+          }
+        ],
+        "status": "completed"
+      },
+      "status_code": 200,
+      "stream": false,
+      "stream_events": []
+    }
   }
 }
