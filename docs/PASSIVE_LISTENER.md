@@ -116,6 +116,7 @@ Best-effort behavior is enabled by default:
 
 - If capture internals fail, listener returns degraded fallback provider responses and records diagnostics as `error.event`.
 - Malformed agent frames are dropped with diagnostics and metrics increments.
+- Passive `.rpk` writes are atomic, so abrupt listener termination keeps the last committed artifact valid.
 
 ## Security
 

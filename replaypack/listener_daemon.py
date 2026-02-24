@@ -11,6 +11,7 @@ import signal
 import socketserver
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib import error as urllib_error
@@ -30,6 +31,8 @@ from replaypack.listener_gateway import (
 from replaypack.listener_agent_gateway import detect_agent, normalize_agent_events
 from replaypack.listener_redaction import redact_listener_headers, redact_listener_value
 from replaypack.listener_state import remove_listener_state, write_listener_state
+
+_PERSIST_DELAY_ENV = "REPLAYKIT_LISTENER_PERSIST_DELAY_SECONDS"
 
 
 def _utc_now() -> str:
@@ -386,6 +389,14 @@ class _ListenerRunRecorder:
         return f"step-{self._step_sequence:06d}"
 
     def _persist_locked(self) -> None:
+        delay_raw = os.environ.get(_PERSIST_DELAY_ENV)
+        if delay_raw:
+            try:
+                delay_seconds = float(delay_raw)
+            except ValueError:
+                delay_seconds = 0.0
+            if delay_seconds > 0:
+                time.sleep(min(delay_seconds, 5.0))
         write_artifact(
             self._run,
             self._out_path,
