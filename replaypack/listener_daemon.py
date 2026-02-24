@@ -13,6 +13,8 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from urllib.parse import urlsplit
 
 from replaypack.artifact import write_artifact
@@ -22,6 +24,7 @@ from replaypack.listener_gateway import (
     build_provider_response,
     detect_provider,
     normalize_provider_request,
+    normalize_provider_response,
     provider_request_fingerprint,
 )
 from replaypack.listener_agent_gateway import detect_agent, normalize_agent_events
@@ -31,6 +34,91 @@ from replaypack.listener_state import remove_listener_state, write_listener_stat
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_UPSTREAM_ENV_BY_PROVIDER = {
+    "openai": "REPLAYKIT_OPENAI_UPSTREAM_URL",
+    "anthropic": "REPLAYKIT_ANTHROPIC_UPSTREAM_URL",
+    "google": "REPLAYKIT_GEMINI_UPSTREAM_URL",
+}
+_UPSTREAM_ENV_FALLBACK = "REPLAYKIT_PROVIDER_UPSTREAM_URL"
+_UPSTREAM_TIMEOUT_ENV = "REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS"
+_UPSTREAM_DEFAULT_TIMEOUT_SECONDS = 5.0
+
+
+def _resolve_provider_upstream_base_url(provider: str) -> str | None:
+    env_keys = [_UPSTREAM_ENV_BY_PROVIDER.get(provider), _UPSTREAM_ENV_FALLBACK]
+    for env_key in env_keys:
+        if not env_key:
+            continue
+        value = os.environ.get(env_key, "").strip()
+        if value:
+            return value.rstrip("/")
+    return None
+
+
+def _resolve_upstream_timeout_seconds() -> float:
+    raw = os.environ.get(_UPSTREAM_TIMEOUT_ENV)
+    if raw is None:
+        return _UPSTREAM_DEFAULT_TIMEOUT_SECONDS
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return _UPSTREAM_DEFAULT_TIMEOUT_SECONDS
+    if parsed <= 0:
+        return _UPSTREAM_DEFAULT_TIMEOUT_SECONDS
+    return min(parsed, 120.0)
+
+
+def _forward_provider_request(
+    *,
+    upstream_base_url: str,
+    path: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout_seconds: float,
+) -> tuple[int, dict[str, Any], str | None]:
+    target_url = f"{upstream_base_url}{path}"
+    forward_headers = {
+        key: value
+        for key, value in headers.items()
+        if key
+        and key.lower()
+        not in {"host", "content-length", "connection"}
+        and not key.lower().startswith("x-replaykit-")
+    }
+    if "content-type" not in {key.lower() for key in forward_headers}:
+        forward_headers["content-type"] = "application/json"
+
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    request = urllib_request.Request(
+        target_url,
+        data=body,
+        headers=forward_headers,
+        method="POST",
+    )
+    opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=timeout_seconds) as response:
+            status_code = int(response.status)
+            raw_body = response.read().decode("utf-8")
+    except urllib_error.HTTPError as error:
+        status_code = int(error.code)
+        raw_body = error.read().decode("utf-8")
+    except (urllib_error.URLError, TimeoutError, OSError, ValueError) as error:
+        return 0, {}, str(error)
+
+    if not raw_body:
+        parsed_body: dict[str, Any] = {}
+    else:
+        try:
+            parsed_payload = json.loads(raw_body)
+        except json.JSONDecodeError:
+            return 0, {}, "upstream returned non-JSON response body"
+        if not isinstance(parsed_payload, dict):
+            return 0, {}, "upstream returned non-object JSON response body"
+        parsed_body = parsed_payload
+    return status_code, parsed_body, None
 
 
 class _ListenerRunRecorder:
@@ -101,11 +189,49 @@ class _ListenerRunRecorder:
             )
             correlation_id = provider_request_fingerprint(request)
 
-            status_code, response_payload, normalized_response = build_provider_response(
-                request=request,
-                sequence=self._request_sequence,
-                fail_reason=fail_reason,
-            )
+            response_source = "synthetic"
+            if fail_reason:
+                status_code, response_payload, normalized_response = build_provider_response(
+                    request=request,
+                    sequence=self._request_sequence,
+                    fail_reason=fail_reason,
+                )
+            else:
+                upstream_base_url = _resolve_provider_upstream_base_url(provider)
+                if upstream_base_url:
+                    response_source = "upstream"
+                    (
+                        status_code,
+                        response_payload,
+                        upstream_error,
+                    ) = _forward_provider_request(
+                        upstream_base_url=upstream_base_url,
+                        path=path,
+                        payload=request.payload,
+                        headers=request.headers,
+                        timeout_seconds=_resolve_upstream_timeout_seconds(),
+                    )
+                    if upstream_error:
+                        response_source = "upstream_error"
+                        status_code, response_payload, normalized_response = (
+                            build_provider_response(
+                                request=request,
+                                sequence=self._request_sequence,
+                                fail_reason=f"upstream_forward_failed: {upstream_error}",
+                            )
+                        )
+                    else:
+                        normalized_response = normalize_provider_response(
+                            provider=provider,
+                            status_code=status_code,
+                            payload=response_payload,
+                        )
+                else:
+                    status_code, response_payload, normalized_response = build_provider_response(
+                        request=request,
+                        sequence=self._request_sequence,
+                        fail_reason=None,
+                    )
 
             self._run.steps.append(
                 Step(
@@ -128,6 +254,7 @@ class _ListenerRunRecorder:
                             "request_id": request.request_id,
                             "correlation_id": correlation_id,
                             "capture_mode": "passive",
+                            "response_source": response_source,
                         }
                     ),
                     timestamp=_utc_now(),
@@ -153,6 +280,7 @@ class _ListenerRunRecorder:
                             "request_id": request.request_id,
                             "correlation_id": correlation_id,
                             "capture_mode": "passive",
+                            "response_source": response_source,
                         }
                     ),
                     timestamp=_utc_now(),

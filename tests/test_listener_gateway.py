@@ -1,5 +1,10 @@
+from contextlib import contextmanager
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import threading
+import time
+from typing import Any
 
 import requests
 from typer.testing import CliRunner
@@ -7,6 +12,63 @@ from typer.testing import CliRunner
 from replaypack.artifact import read_artifact
 from replaypack.cli.app import app
 from replaypack.listener_gateway import detect_provider
+
+
+@contextmanager
+def _local_upstream_server(
+    routes: dict[str, tuple[int, dict[str, Any], float]],
+) -> tuple[str, list[dict[str, Any]]]:
+    captured_requests: list[dict[str, Any]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            route = routes.get(self.path)
+            if route is None:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"error": {"type": "not_found", "path": self.path}}).encode("utf-8")
+                )
+                return
+
+            status_code, response_payload, delay_seconds = route
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
+
+            body_size = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(body_size) if body_size else b"{}"
+            decoded = body_bytes.decode("utf-8")
+            try:
+                parsed_payload = json.loads(decoded) if decoded else {}
+            except json.JSONDecodeError:
+                parsed_payload = {"_raw": decoded}
+            captured_requests.append(
+                {
+                    "path": self.path,
+                    "headers": {str(key).lower(): str(value) for key, value in self.headers.items()},
+                    "payload": parsed_payload,
+                }
+            )
+
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(response_payload).encode("utf-8"))
+
+        def log_message(self, fmt: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{int(port)}", captured_requests
+    finally:
+        server.shutdown()
+        thread.join(timeout=2.0)
+        server.server_close()
 
 
 def test_listener_gateway_detect_provider_paths() -> None:
@@ -140,3 +202,257 @@ def test_listener_gateway_error_path_returns_502_and_captures_failure(tmp_path: 
         "message": "forced-failure",
         "type": "gateway_error",
     }
+
+
+def test_listener_gateway_forwards_upstream_provider_responses(tmp_path: Path) -> None:
+    routes = {
+        "/v1/chat/completions": (
+            200,
+            {
+                "id": "chatcmpl-upstream-001",
+                "object": "chat.completion",
+                "choices": [{"message": {"role": "assistant", "content": "openai-upstream"}}],
+            },
+            0.0,
+        ),
+        "/v1/messages": (
+            200,
+            {
+                "id": "msg-upstream-001",
+                "type": "message",
+                "content": [{"type": "text", "text": "anthropic-upstream"}],
+            },
+            0.0,
+        ),
+        "/v1beta/models/gemini-1.5-flash:generateContent": (
+            200,
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": "google-upstream"}],
+                        }
+                    }
+                ]
+            },
+            0.0,
+        ),
+    }
+    with _local_upstream_server(routes) as (upstream_base_url, captured_requests):
+        runner = CliRunner()
+        state_file = tmp_path / "listener-state.json"
+        out_path = tmp_path / "listener-capture.rpk"
+        start_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "start",
+                "--state-file",
+                str(state_file),
+                "--out",
+                str(out_path),
+                "--json",
+            ],
+            env={
+                "REPLAYKIT_OPENAI_UPSTREAM_URL": upstream_base_url,
+                "REPLAYKIT_ANTHROPIC_UPSTREAM_URL": upstream_base_url,
+                "REPLAYKIT_GEMINI_UPSTREAM_URL": upstream_base_url,
+            },
+        )
+        assert start_result.exit_code == 0, start_result.output
+        started = json.loads(start_result.stdout.strip())
+        base_url = f"http://{started['host']}:{started['port']}"
+        try:
+            openai = requests.post(
+                f"{base_url}/v1/chat/completions",
+                json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi openai"}]},
+                timeout=2.0,
+            )
+            assert openai.status_code == 200
+            assert openai.json() == routes["/v1/chat/completions"][1]
+
+            anthropic = requests.post(
+                f"{base_url}/v1/messages",
+                json={"model": "claude-3-5-sonnet", "messages": [{"role": "user", "content": "hi anthropic"}]},
+                timeout=2.0,
+            )
+            assert anthropic.status_code == 200
+            assert anthropic.json() == routes["/v1/messages"][1]
+
+            google = requests.post(
+                f"{base_url}/v1beta/models/gemini-1.5-flash:generateContent",
+                json={"contents": [{"role": "user", "parts": [{"text": "hi google"}]}]},
+                timeout=2.0,
+            )
+            assert google.status_code == 200
+            assert google.json() == routes["/v1beta/models/gemini-1.5-flash:generateContent"][1]
+        finally:
+            stop_result = runner.invoke(
+                app,
+                [
+                    "listen",
+                    "stop",
+                    "--state-file",
+                    str(state_file),
+                    "--json",
+                ],
+            )
+            assert stop_result.exit_code == 0, stop_result.output
+
+    assert [entry["path"] for entry in captured_requests] == [
+        "/v1/chat/completions",
+        "/v1/messages",
+        "/v1beta/models/gemini-1.5-flash:generateContent",
+    ]
+    assert captured_requests[0]["payload"]["messages"][0]["content"] == "hi openai"
+    assert captured_requests[1]["payload"]["messages"][0]["content"] == "hi anthropic"
+    assert captured_requests[2]["payload"]["contents"][0]["parts"][0]["text"] == "hi google"
+
+    run = read_artifact(out_path)
+    response_steps = [step for step in run.steps if step.type == "model.response"]
+    assert [step.output["status_code"] for step in response_steps] == [200, 200, 200]
+    assert response_steps[0].output["output"] == routes["/v1/chat/completions"][1]
+    assert response_steps[1].output["output"] == routes["/v1/messages"][1]
+    assert response_steps[2].output["output"] == routes["/v1beta/models/gemini-1.5-flash:generateContent"][1]
+    assert response_steps[0].output["assembled_text"] == "openai-upstream"
+    assert response_steps[1].output["assembled_text"] == "anthropic-upstream"
+    assert response_steps[2].output["assembled_text"] == "google-upstream"
+    assert response_steps[0].metadata.get("response_source") == "upstream"
+    assert response_steps[1].metadata.get("response_source") == "upstream"
+    assert response_steps[2].metadata.get("response_source") == "upstream"
+
+
+def test_listener_gateway_passes_upstream_non_2xx_status_and_body(tmp_path: Path) -> None:
+    upstream_error_body = {
+        "error": {
+            "type": "rate_limit_error",
+            "message": "too many requests",
+        }
+    }
+    with _local_upstream_server(
+        {
+            "/v1/chat/completions": (
+                429,
+                upstream_error_body,
+                0.0,
+            )
+        }
+    ) as (upstream_base_url, _captured_requests):
+        runner = CliRunner()
+        state_file = tmp_path / "listener-state.json"
+        out_path = tmp_path / "listener-capture.rpk"
+        start_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "start",
+                "--state-file",
+                str(state_file),
+                "--out",
+                str(out_path),
+                "--json",
+            ],
+            env={"REPLAYKIT_OPENAI_UPSTREAM_URL": upstream_base_url},
+        )
+        assert start_result.exit_code == 0, start_result.output
+        started = json.loads(start_result.stdout.strip())
+        base_url = f"http://{started['host']}:{started['port']}"
+        try:
+            response = requests.post(
+                f"{base_url}/v1/chat/completions",
+                json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+                timeout=2.0,
+            )
+            assert response.status_code == 429
+            assert response.json() == upstream_error_body
+        finally:
+            stop_result = runner.invoke(
+                app,
+                [
+                    "listen",
+                    "stop",
+                    "--state-file",
+                    str(state_file),
+                    "--json",
+                ],
+            )
+            assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    response_step = run.steps[-1]
+    assert response_step.type == "model.response"
+    assert response_step.output["status_code"] == 429
+    assert response_step.output["output"] == upstream_error_body
+    assert response_step.output["error"] == {
+        "payload": upstream_error_body,
+        "status_code": 429,
+    }
+    assert response_step.metadata.get("response_source") == "upstream"
+
+
+def test_listener_gateway_upstream_timeout_returns_502(tmp_path: Path) -> None:
+    with _local_upstream_server(
+        {
+            "/v1/chat/completions": (
+                200,
+                {
+                    "id": "chatcmpl-upstream-timeout",
+                    "object": "chat.completion",
+                    "choices": [{"message": {"role": "assistant", "content": "slow"}}],
+                },
+                0.25,
+            )
+        }
+    ) as (upstream_base_url, _captured_requests):
+        runner = CliRunner()
+        state_file = tmp_path / "listener-state.json"
+        out_path = tmp_path / "listener-capture.rpk"
+        start_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "start",
+                "--state-file",
+                str(state_file),
+                "--out",
+                str(out_path),
+                "--json",
+            ],
+            env={
+                "REPLAYKIT_OPENAI_UPSTREAM_URL": upstream_base_url,
+                "REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS": "0.05",
+            },
+        )
+        assert start_result.exit_code == 0, start_result.output
+        started = json.loads(start_result.stdout.strip())
+        base_url = f"http://{started['host']}:{started['port']}"
+        try:
+            response = requests.post(
+                f"{base_url}/v1/chat/completions",
+                json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "timeout"}]},
+                timeout=2.0,
+            )
+            assert response.status_code == 502
+            body = response.json()
+            assert body["error"]["type"] == "listener_gateway_error"
+            assert "upstream_forward_failed" in body["error"]["message"]
+        finally:
+            stop_result = runner.invoke(
+                app,
+                [
+                    "listen",
+                    "stop",
+                    "--state-file",
+                    str(state_file),
+                    "--json",
+                ],
+            )
+            assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    response_step = run.steps[-1]
+    assert response_step.output["status_code"] == 502
+    assert response_step.output["error"]["type"] == "gateway_error"
+    assert "upstream_forward_failed" in response_step.output["error"]["message"]
+    assert response_step.metadata.get("response_source") == "upstream_error"
