@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import gzip
+import io
 import json
 import os
 from pathlib import Path
@@ -624,6 +625,15 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             self._write_json(status_code, response_body)
             return
 
+        if self._wants_openai_responses_sse(
+            provider=provider,
+            path=parsed.path,
+            payload=payload,
+            status_code=status_code,
+        ):
+            self._write_openai_responses_sse(response_body)
+            return
+
         self._write_json(status_code, response_body)
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -691,6 +701,137 @@ class _ListenerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _wants_openai_responses_sse(
+        self,
+        *,
+        provider: str,
+        path: str,
+        payload: dict[str, Any],
+        status_code: int,
+    ) -> bool:
+        if status_code >= 400:
+            return False
+        if provider != "openai" or path not in {"/responses", "/v1/responses"}:
+            return False
+        accept = str(self.headers.get("Accept", "")).lower()
+        if "text/event-stream" in accept:
+            return True
+        return bool(payload.get("stream"))
+
+    def _write_openai_responses_sse(self, payload: dict[str, Any]) -> None:
+        response_id = str(payload.get("id") or f"resp-listener-{int(time.time() * 1000)}")
+        model = str(payload.get("model") or "gpt-4o-mini")
+        output_text = str(payload.get("output_text") or "")
+        if not output_text:
+            output = payload.get("output")
+            if (
+                isinstance(output, list)
+                and output
+                and isinstance(output[0], dict)
+                and isinstance(output[0].get("content"), list)
+                and output[0]["content"]
+                and isinstance(output[0]["content"][0], dict)
+                and isinstance(output[0]["content"][0].get("text"), str)
+            ):
+                output_text = output[0]["content"][0]["text"]
+        message_id = f"msg-{response_id}"
+        completed_item = {
+            "id": message_id,
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": output_text,
+                    "annotations": [],
+                }
+            ],
+        }
+        completed_response = {
+            "id": response_id,
+            "object": "response",
+            "status": "completed",
+            "model": model,
+            "output": [completed_item],
+            "output_text": output_text,
+        }
+        events: list[dict[str, Any]] = [
+            {
+                "type": "response.created",
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "status": "in_progress",
+                    "model": model,
+                },
+            },
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {
+                    "id": message_id,
+                    "type": "message",
+                    "status": "in_progress",
+                    "role": "assistant",
+                    "content": [],
+                },
+            },
+            {
+                "type": "response.content_part.added",
+                "output_index": 0,
+                "content_index": 0,
+                "part": {"type": "output_text", "text": ""},
+            },
+        ]
+        for chunk in _split_stream_text(output_text):
+            events.append(
+                {
+                    "type": "response.output_text.delta",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": chunk,
+                }
+            )
+        events.extend(
+            [
+                {
+                    "type": "response.output_text.done",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "text": output_text,
+                },
+                {
+                    "type": "response.content_part.done",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "part": {"type": "output_text", "text": output_text},
+                },
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": completed_item,
+                },
+                {
+                    "type": "response.completed",
+                    "response": completed_response,
+                },
+            ]
+        )
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for event in events:
+            frame = f"data: {json.dumps(event, ensure_ascii=True, separators=(',', ':'))}\n\n"
+            self.wfile.write(frame.encode("utf-8"))
+            self.wfile.flush()
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+        self.close_connection = True
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -733,12 +874,34 @@ def _decode_request_body(*, body: bytes, content_encoding: str | None) -> tuple[
             if encoding == "zstd":
                 if zstd is None:
                     return body, "unsupported_content_encoding:zstd"
-                decoded = zstd.ZstdDecompressor().decompress(decoded)
+                decoded, decode_error = _decode_zstd(decoded)
+                if decode_error:
+                    return body, decode_error
                 continue
-        except (OSError, zlib.error, ValueError):
+        except Exception:
             return body, f"invalid_content_encoding:{encoding}"
         return body, f"unsupported_content_encoding:{encoding}"
     return decoded, None
+
+
+def _decode_zstd(body: bytes) -> tuple[bytes, str | None]:
+    if zstd is None:
+        return body, "unsupported_content_encoding:zstd"
+    decompressor = zstd.ZstdDecompressor()
+    try:
+        return decompressor.decompress(body), None
+    except Exception:
+        try:
+            with decompressor.stream_reader(io.BytesIO(body)) as reader:
+                return reader.read(), None
+        except Exception:
+            return body, "invalid_content_encoding:zstd"
+
+
+def _split_stream_text(text: str, chunk_size: int = 5) -> list[str]:
+    if not text:
+        return []
+    return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
 
 
 def _runtime_payload(
