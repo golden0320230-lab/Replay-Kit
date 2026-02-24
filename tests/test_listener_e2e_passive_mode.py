@@ -177,3 +177,86 @@ def test_passive_listener_e2e_stream_capture_replay_assert(tmp_path: Path) -> No
     summary = json.loads(assertion.stdout.strip())
     assert summary["status"] == "pass"
     assert summary["summary"]["changed"] == 0
+
+
+def test_passive_listener_e2e_openai_responses_routes(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-responses-state.json"
+    capture_path = tmp_path / "listener-responses-capture.rpk"
+    replay_path = tmp_path / "listener-responses-replay.rpk"
+
+    host, port = _start_listener(runner, state_file=state_file, out_path=capture_path)
+    base_url = f"http://{host}:{port}"
+
+    try:
+        responses = requests.post(
+            f"{base_url}/responses",
+            json={"model": "gpt-5.3-codex", "input": "say hello"},
+            timeout=2.0,
+        )
+        assert responses.status_code == 200
+        responses_payload = responses.json()
+        assert responses_payload["object"] == "response"
+        assert responses_payload["status"] == "completed"
+
+        v1_responses = requests.post(
+            f"{base_url}/v1/responses",
+            json={"model": "gpt-5.3-codex", "input": "say hello again"},
+            timeout=2.0,
+        )
+        assert v1_responses.status_code == 200
+        v1_payload = v1_responses.json()
+        assert v1_payload["object"] == "response"
+        assert v1_payload["status"] == "completed"
+    finally:
+        _stop_listener(runner, state_file=state_file)
+
+    run = read_artifact(capture_path)
+    assert [step.type for step in run.steps] == [
+        "model.request",
+        "model.response",
+        "model.request",
+        "model.response",
+    ]
+    assert [step.metadata.get("path") for step in run.steps] == [
+        "/responses",
+        "/responses",
+        "/v1/responses",
+        "/v1/responses",
+    ]
+    assert [step.metadata.get("provider") for step in run.steps] == [
+        "openai",
+        "openai",
+        "openai",
+        "openai",
+    ]
+
+    replay = runner.invoke(
+        app,
+        [
+            "replay",
+            str(capture_path),
+            "--out",
+            str(replay_path),
+            "--seed",
+            "19",
+            "--fixed-clock",
+            "2026-02-23T00:00:00Z",
+        ],
+    )
+    assert replay.exit_code == 0, replay.output
+
+    assertion = runner.invoke(
+        app,
+        [
+            "assert",
+            str(replay_path),
+            "--candidate",
+            str(replay_path),
+            "--json",
+        ],
+    )
+    assert assertion.exit_code == 0, assertion.output
+    summary = json.loads(assertion.stdout.strip())
+    assert summary["status"] == "pass"
+    assert summary["summary"]["identical"] == 4
