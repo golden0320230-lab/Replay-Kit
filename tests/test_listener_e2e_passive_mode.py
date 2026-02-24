@@ -9,6 +9,18 @@ from replaypack.artifact import read_artifact
 from replaypack.cli.app import app
 
 
+def _read_sse_events(response: requests.Response) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for line in response.iter_lines(decode_unicode=True):
+        if not line or not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if payload == "[DONE]":
+            break
+        events.append(json.loads(payload))
+    return events
+
+
 def _start_listener(runner: CliRunner, *, state_file: Path, out_path: Path) -> tuple[str, int]:
     start = runner.invoke(
         app,
@@ -286,7 +298,7 @@ def test_passive_listener_e2e_codex_models_preflight_and_encoded_response(
         model_ids = {item["id"] for item in models_payload["data"]}
         assert "gpt-5.3-codex" in model_ids
 
-        encoded_payload = zstd.ZstdCompressor().compress(
+        encoded_payload = zstd.ZstdCompressor(write_content_size=False).compress(
             json.dumps(
                 {"model": "gpt-5.3-codex", "input": "say hello"},
                 separators=(",", ":"),
@@ -299,13 +311,17 @@ def test_passive_listener_e2e_codex_models_preflight_and_encoded_response(
             headers={
                 "content-type": "application/json",
                 "content-encoding": "zstd",
+                "accept": "text/event-stream",
             },
             timeout=2.0,
+            stream=True,
         )
         assert response.status_code == 200
-        response_payload = response.json()
-        assert response_payload["object"] == "response"
-        assert response_payload["status"] == "completed"
+        assert response.headers["Content-Type"].startswith("text/event-stream")
+        events = _read_sse_events(response)
+        event_types = [event.get("type") for event in events]
+        assert "response.created" in event_types
+        assert "response.completed" in event_types
     finally:
         _stop_listener(runner, state_file=state_file)
 

@@ -15,6 +15,18 @@ from replaypack.cli.app import app
 from replaypack.listener_gateway import detect_provider
 
 
+def _read_sse_events(response: requests.Response) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line in response.iter_lines(decode_unicode=True):
+        if not line or not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if payload == "[DONE]":
+            break
+        events.append(json.loads(payload))
+    return events
+
+
 @contextmanager
 def _local_upstream_server(
     routes: dict[str, tuple[int, dict[str, Any], float]],
@@ -311,7 +323,7 @@ def test_listener_gateway_decodes_zstd_encoded_openai_responses_payload(tmp_path
 
     try:
         request_payload = {"model": "gpt-5.3-codex", "input": "say hello"}
-        encoded_payload = zstd.ZstdCompressor().compress(
+        encoded_payload = zstd.ZstdCompressor(write_content_size=False).compress(
             json.dumps(request_payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         )
         response = requests.post(
@@ -347,6 +359,67 @@ def test_listener_gateway_decodes_zstd_encoded_openai_responses_payload(tmp_path
     assert request_step.metadata.get("path") == "/responses"
     assert request_step.input["payload"]["model"] == "gpt-5.3-codex"
     assert request_step.input["payload"]["input"] == "say hello"
+
+
+def test_listener_gateway_streams_openai_responses_sse_completion_event(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        response = requests.post(
+            f"{base_url}/responses",
+            json={
+                "model": "gpt-5.3-codex",
+                "input": "say hello",
+                "stream": True,
+            },
+            headers={"accept": "text/event-stream"},
+            timeout=5.0,
+            stream=True,
+        )
+        assert response.status_code == 200
+        assert response.headers["Content-Type"].startswith("text/event-stream")
+        events = _read_sse_events(response)
+        event_types = [event.get("type") for event in events]
+        assert "response.created" in event_types
+        assert "response.completed" in event_types
+        completed = [event for event in events if event.get("type") == "response.completed"][-1]
+        assert completed["response"]["status"] == "completed"
+        assert completed["response"]["output_text"] == "ReplayKit listener response"
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    assert [step.type for step in run.steps] == ["model.request", "model.response"]
+    assert run.steps[0].metadata.get("path") == "/responses"
+    assert run.steps[1].output["stream"]["enabled"] is True
 
 
 def test_listener_gateway_reports_unsupported_content_encoding(tmp_path: Path) -> None:
