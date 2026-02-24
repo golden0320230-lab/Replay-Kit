@@ -227,6 +227,11 @@ def test_listener_gateway_captures_openai_responses_routes(tmp_path: Path) -> No
         "/v1/responses",
         "/v1/responses",
     ]
+    response_steps = [step for step in run.steps if step.type == "model.response"]
+    assert [step.output["assembled_text"] for step in response_steps] == [
+        "ReplayKit listener response",
+        "ReplayKit listener response",
+    ]
 
 
 def test_listener_gateway_error_path_returns_502_and_captures_failure(tmp_path: Path) -> None:
@@ -509,6 +514,8 @@ def test_listener_gateway_forwards_upstream_openai_responses_routes(tmp_path: Pa
     assert [step.output["status_code"] for step in response_steps] == [200, 200]
     assert response_steps[0].output["output"] == routes["/responses"][1]
     assert response_steps[1].output["output"] == routes["/v1/responses"][1]
+    assert response_steps[0].output["assembled_text"] == "hi from upstream"
+    assert response_steps[1].output["assembled_text"] == "hello from upstream"
     assert response_steps[0].metadata.get("response_source") == "upstream"
     assert response_steps[1].metadata.get("response_source") == "upstream"
 

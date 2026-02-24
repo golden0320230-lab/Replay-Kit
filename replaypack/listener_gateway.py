@@ -252,6 +252,30 @@ def _extract_model(provider: str, payload: dict[str, Any], *, path: str) -> str 
 
 def _extract_text(provider: str, payload: dict[str, Any]) -> str:
     if provider == "openai":
+        output_text = payload.get("output_text")
+        if isinstance(output_text, str):
+            return output_text
+
+        output = payload.get("output")
+        if isinstance(output, list):
+            chunks: list[str] = []
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "output_text":
+                                text = part.get("text")
+                                if isinstance(text, str):
+                                    chunks.append(text)
+                text_value = item.get("text")
+                if isinstance(text_value, str):
+                    chunks.append(text_value)
+            if chunks:
+                return "".join(chunks)
+
         choices = payload.get("choices")
         if isinstance(choices, list) and choices:
             first = choices[0]

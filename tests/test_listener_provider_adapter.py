@@ -39,6 +39,39 @@ def test_listener_provider_adapter_canonical_snapshot() -> None:
             "choices": [{"message": {"role": "assistant", "content": "hello"}}],
         },
     )
+    openai_responses_request = normalize_provider_request(
+        provider="openai",
+        path="/responses",
+        payload={
+            "model": "gpt-5.3-codex",
+            "input": "say hello",
+            "metadata": {"session": "codex"},
+        },
+        headers={
+            "X-Trace": "trace-responses-001",
+            "Authorization": "Bearer example-auth-header",
+        },
+        request_id="openai-responses-req-001",
+    )
+    openai_responses_response = normalize_provider_response(
+        provider="openai",
+        status_code=200,
+        payload={
+            "id": "resp-upstream-001",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-5.3-codex",
+            "output": [
+                {
+                    "id": "msg-upstream-001",
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello from responses"}],
+                }
+            ],
+        },
+    )
 
     anthropic_request = normalize_provider_request(
         provider="anthropic",
@@ -90,6 +123,11 @@ def test_listener_provider_adapter_canonical_snapshot() -> None:
             "request": asdict(openai_request),
             "response": asdict(openai_response),
             "fingerprint": provider_request_fingerprint(openai_request),
+        },
+        "openai_responses": {
+            "request": asdict(openai_responses_request),
+            "response": asdict(openai_responses_response),
+            "fingerprint": provider_request_fingerprint(openai_responses_request),
         },
         "anthropic": {
             "request": asdict(anthropic_request),
