@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from replaypack.artifact import write_artifact
 from replaypack.core.models import Run, Step
@@ -172,6 +172,7 @@ class _ListenerRunRecorder:
         *,
         provider: str,
         path: str,
+        query_params: dict[str, Any] | None,
         payload: dict[str, Any],
         headers: dict[str, str],
         fail_reason: str | None,
@@ -243,6 +244,7 @@ class _ListenerRunRecorder:
                     input={
                         "provider": provider,
                         "path": path,
+                        "query": redact_listener_value(query_params or {}),
                         "request_id": request.request_id,
                         "model": request.model,
                         "stream": request.stream,
@@ -551,6 +553,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             status_code, response_body = recorder.record_provider_transaction(
                 provider=provider,
                 path=parsed.path,
+                query_params={key: value for key, value in parse_qsl(parsed.query, keep_blank_values=True)},
                 payload=payload,
                 headers={str(key): str(value) for key, value in self.headers.items()},
                 fail_reason=fail_reason,
