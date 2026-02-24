@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -24,6 +25,7 @@ class UIServerConfig:
     host: str = "127.0.0.1"
     port: int = 4310
     base_dir: Path = Path.cwd()
+    listener_recordings_dir: Path = Path("runs/passive/ui")
     listener_state_file: Path = Path("runs/passive/ui-listener-state.json")
     listener_out_file: Path = Path("runs/passive/ui-listener-capture.rpk")
 
@@ -72,6 +74,11 @@ def _resolve_runtime_path(base_dir: Path, configured: Path) -> Path:
     return (base_dir / configured).resolve()
 
 
+def _listener_capture_name() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"ui-listener-capture-{stamp}.rpk"
+
+
 def _run_listener_cli(base_dir: Path, args: list[str]) -> tuple[int, dict[str, Any]]:
     command = [sys.executable, "-m", "replaypack", "listen", *args, "--json"]
     completed = subprocess.run(
@@ -111,8 +118,9 @@ def _run_listener_cli(base_dir: Path, args: list[str]) -> tuple[int, dict[str, A
 
 def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
     base_dir = config.base_dir.resolve()
-    listener_state_path = _resolve_runtime_path(base_dir, config.listener_state_file)
-    listener_out_path = _resolve_runtime_path(base_dir, config.listener_out_file)
+    default_listener_state_path = _resolve_runtime_path(base_dir, config.listener_state_file)
+    default_listener_out_path = _resolve_runtime_path(base_dir, config.listener_out_file)
+    default_recordings_dir = _resolve_runtime_path(base_dir, config.listener_recordings_dir)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -134,7 +142,7 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
                 return
 
             if route == "/api/listener/status":
-                self._handle_listener_status()
+                self._handle_listener_status(query)
                 return
 
             self._write_json(404, {"error": "Not found"})
@@ -183,7 +191,15 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             payload["right_path"] = _display_path(base_dir, right_path)
             self._write_json(200, payload)
 
-        def _handle_listener_status(self) -> None:
+        def _handle_listener_status(self, query: dict[str, list[str]]) -> None:
+            state_raw = _first(query.get("state_file"))
+            listener_state_path = (
+                _resolve_runtime_path(base_dir, Path(state_raw))
+                if state_raw
+                else default_listener_state_path
+            )
+            listener_out_path = default_listener_out_path
+            listener_recordings_dir = default_recordings_dir
             code, payload = _run_listener_cli(
                 base_dir,
                 [
@@ -194,10 +210,32 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             )
             payload["ui_listener_state_file"] = _display_path(base_dir, listener_state_path)
             payload["ui_listener_out_file"] = _display_path(base_dir, listener_out_path)
+            payload["ui_listener_recordings_dir"] = _display_path(base_dir, listener_recordings_dir)
             self._write_json(200 if code == 0 else 400, payload)
 
         def _handle_listener_start(self) -> None:
+            request = self._read_json_body()
+            state_raw = str(request.get("state_file", "")).strip()
+            recordings_raw = str(request.get("recordings_dir", "")).strip()
+            out_raw = str(request.get("out_file", "")).strip()
+
+            listener_state_path = (
+                _resolve_runtime_path(base_dir, Path(state_raw))
+                if state_raw
+                else default_listener_state_path
+            )
+            listener_recordings_dir = (
+                _resolve_runtime_path(base_dir, Path(recordings_raw))
+                if recordings_raw
+                else default_recordings_dir
+            )
+            if out_raw:
+                listener_out_path = _resolve_runtime_path(base_dir, Path(out_raw))
+            else:
+                listener_out_path = listener_recordings_dir / _listener_capture_name()
+
             listener_state_path.parent.mkdir(parents=True, exist_ok=True)
+            listener_recordings_dir.mkdir(parents=True, exist_ok=True)
             listener_out_path.parent.mkdir(parents=True, exist_ok=True)
             code, payload = _run_listener_cli(
                 base_dir,
@@ -211,9 +249,19 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             )
             payload["ui_listener_state_file"] = _display_path(base_dir, listener_state_path)
             payload["ui_listener_out_file"] = _display_path(base_dir, listener_out_path)
+            payload["ui_listener_recordings_dir"] = _display_path(base_dir, listener_recordings_dir)
             self._write_json(200 if code == 0 else 400, payload)
 
         def _handle_listener_stop(self) -> None:
+            request = self._read_json_body()
+            state_raw = str(request.get("state_file", "")).strip()
+            listener_state_path = (
+                _resolve_runtime_path(base_dir, Path(state_raw))
+                if state_raw
+                else default_listener_state_path
+            )
+            listener_out_path = default_listener_out_path
+            listener_recordings_dir = default_recordings_dir
             code, payload = _run_listener_cli(
                 base_dir,
                 [
@@ -224,7 +272,29 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             )
             payload["ui_listener_state_file"] = _display_path(base_dir, listener_state_path)
             payload["ui_listener_out_file"] = _display_path(base_dir, listener_out_path)
+            payload["ui_listener_recordings_dir"] = _display_path(base_dir, listener_recordings_dir)
             self._write_json(200 if code == 0 else 400, payload)
+
+        def _read_json_body(self) -> dict[str, Any]:
+            raw_length = self.headers.get("Content-Length")
+            if not raw_length:
+                return {}
+            try:
+                length = int(raw_length)
+            except ValueError:
+                return {}
+            if length <= 0:
+                return {}
+            payload = self.rfile.read(length)
+            if not payload:
+                return {}
+            try:
+                data = json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return {}
+            if not isinstance(data, dict):
+                return {}
+            return data
 
         def _write_html(self, html: str) -> None:
             body = html.encode("utf-8")
@@ -681,6 +751,24 @@ def _render_index_html() -> str:
       </div>
     </div>
 
+    <div class="controls">
+      <div>
+        <label for="listenerStateFile">Listener State File</label>
+        <input id="listenerStateFile" name="listenerStateFile" type="text" placeholder="runs/passive/ui-listener-state.json" />
+      </div>
+      <div>
+        <label for="listenerRecordingsDir">Default Recording Folder</label>
+        <input id="listenerRecordingsDir" name="listenerRecordingsDir" type="text" placeholder="runs/passive/ui" />
+      </div>
+    </div>
+
+    <div class="controls">
+      <div>
+        <label for="listenerOutFile">Output Artifact (optional; auto-generated if blank)</label>
+        <input id="listenerOutFile" name="listenerOutFile" type="text" placeholder="runs/passive/ui/ui-listener-capture-YYYYMMDDTHHMMSSZ.rpk" />
+      </div>
+    </div>
+
     <datalist id="artifactOptions"></datalist>
 
     <div class="actions">
@@ -754,6 +842,9 @@ def _render_index_html() -> str:
     const statusEl = document.getElementById("status");
     const leftInput = document.getElementById("leftArtifact");
     const rightInput = document.getElementById("rightArtifact");
+    const listenerStateFileInput = document.getElementById("listenerStateFile");
+    const listenerRecordingsDirInput = document.getElementById("listenerRecordingsDir");
+    const listenerOutFileInput = document.getElementById("listenerOutFile");
     const optionsEl = document.getElementById("artifactOptions");
     const stepList = document.getElementById("stepList");
     const stepEmpty = document.getElementById("stepEmpty");
@@ -837,10 +928,24 @@ def _render_index_html() -> str:
       listenerStartButton.disabled = disabled;
       listenerStopButton.disabled = disabled;
       listenerStatusButton.disabled = disabled;
+      listenerStateFileInput.disabled = disabled;
+      listenerRecordingsDirInput.disabled = disabled;
+      listenerOutFileInput.disabled = disabled;
     }
 
     function refreshArtifactInputsFromListener(payload) {
       const outPath = payload ? (payload.artifact_out || payload.ui_listener_out_file) : null;
+      const statePath = payload ? payload.ui_listener_state_file : null;
+      const recordingsDir = payload ? payload.ui_listener_recordings_dir : null;
+      if (statePath) {
+        listenerStateFileInput.value = statePath;
+      }
+      if (recordingsDir) {
+        listenerRecordingsDirInput.value = recordingsDir;
+      }
+      if (outPath) {
+        listenerOutFileInput.value = outPath;
+      }
       if (!outPath) {
         return;
       }
@@ -855,8 +960,14 @@ def _render_index_html() -> str:
     async function refreshListenerStatus() {
       setListenerControlsDisabled(true);
       try {
-        const res = await fetch("/api/listener/status");
+        const query = new URLSearchParams();
+        const statePath = listenerStateFileInput.value.trim();
+        if (statePath) {
+          query.set("state_file", statePath);
+        }
+        const res = await fetch("/api/listener/status" + (query.toString() ? ("?" + query.toString()) : ""));
         const payload = await res.json();
+        refreshArtifactInputsFromListener(payload);
         if (!res.ok || payload.status === "error") {
           setStatus(payload.message || "Listener status check failed.", true);
           return;
@@ -874,17 +985,22 @@ def _render_index_html() -> str:
       setListenerControlsDisabled(true);
       setStatus(action === "start" ? "Starting listener..." : "Stopping listener...");
       try {
+        const body = {
+          state_file: listenerStateFileInput.value.trim(),
+          recordings_dir: listenerRecordingsDirInput.value.trim(),
+          out_file: listenerOutFileInput.value.trim(),
+        };
         const res = await fetch("/api/listener/" + action, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: "{}",
+          body: JSON.stringify(body),
         });
         const payload = await res.json();
+        refreshArtifactInputsFromListener(payload);
         if (!res.ok || payload.status === "error") {
           setStatus(payload.message || ("Listener " + action + " failed."), true);
           return;
         }
-        refreshArtifactInputsFromListener(payload);
         await loadArtifactOptions();
         setStatus(payload.message || ("Listener " + action + " completed."));
       } catch (_err) {
