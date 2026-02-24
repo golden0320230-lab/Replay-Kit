@@ -66,6 +66,14 @@ def main() -> int:
         openai.raise_for_status()
         _write_json(out_dir / "listener-openai-response.json", openai.json())
 
+        responses = requests.post(
+            f"{base_url}/responses",
+            json={"model": "gpt-5.3-codex", "input": "hello"},
+            timeout=2.0,
+        )
+        responses.raise_for_status()
+        _write_json(out_dir / "listener-openai-responses-route.json", responses.json())
+
         codex = requests.post(
             f"{base_url}/agent/codex/events",
             json={
