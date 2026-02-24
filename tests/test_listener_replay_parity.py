@@ -81,6 +81,87 @@ def _capture_listener_fixture(tmp_path: Path, name: str) -> Path:
     return out_path
 
 
+def _capture_transparent_fixture(tmp_path: Path, name: str, *, monkeypatch) -> Path:
+    runner = CliRunner()
+    transparent_state = tmp_path / f"{name}-transparent-state.json"
+    listener_state = tmp_path / f"{name}-listener-state.json"
+    out_path = tmp_path / f"{name}.rpk"
+
+    monkeypatch.setattr("replaypack.cli.app._transparent_platform_name", lambda: "darwin")
+    monkeypatch.delenv("REPLAYKIT_TRANSPARENT_EXECUTE", raising=False)
+
+    transparent_start = runner.invoke(
+        app,
+        [
+            "listen",
+            "transparent",
+            "start",
+            "--state-file",
+            str(transparent_state),
+            "--json",
+        ],
+    )
+    assert transparent_start.exit_code == 0, transparent_start.output
+
+    listener_start = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(listener_state),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert listener_start.exit_code == 0, listener_start.output
+    started = json.loads(listener_start.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        models = requests.get(
+            f"{base_url}/models",
+            params={"client_version": "0.104.0"},
+            timeout=2.0,
+        )
+        assert models.status_code == 200
+
+        responses = requests.post(
+            f"{base_url}/responses",
+            json={"model": "gpt-5.3-codex", "stream": True, "input": "hello"},
+            timeout=2.0,
+        )
+        assert responses.status_code == 200
+    finally:
+        listener_stop = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(listener_state),
+                "--json",
+            ],
+        )
+        assert listener_stop.exit_code == 0, listener_stop.output
+
+        transparent_stop = runner.invoke(
+            app,
+            [
+                "listen",
+                "transparent",
+                "stop",
+                "--state-file",
+                str(transparent_state),
+                "--json",
+            ],
+        )
+        assert transparent_stop.exit_code == 0, transparent_stop.output
+
+    return out_path
+
+
 def test_listener_generated_artifact_stub_replay_is_deterministic(tmp_path: Path) -> None:
     source_path = _capture_listener_fixture(tmp_path, "listener-source")
     source_run = read_artifact(source_path)
@@ -195,3 +276,92 @@ def test_listener_cli_stub_replay_offline_golden_assertions(
         "missing_left": 0,
         "missing_right": 0,
     }
+
+
+def test_transparent_e2e_capture_replay_assert(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = _capture_transparent_fixture(tmp_path, "transparent-e2e", monkeypatch=monkeypatch)
+    source_run = read_artifact(source_path)
+    assert source_run.steps
+    assert [step.type for step in source_run.steps] == [
+        "model.request",
+        "model.response",
+        "model.request",
+        "model.response",
+    ]
+
+    runner = CliRunner()
+    replay_path = tmp_path / "transparent-e2e-replay.rpk"
+
+    replay = runner.invoke(
+        app,
+        [
+            "replay",
+            str(source_path),
+            "--out",
+            str(replay_path),
+            "--seed",
+            "19",
+            "--fixed-clock",
+            "2026-02-23T00:00:00Z",
+        ],
+    )
+    assert replay.exit_code == 0, replay.output
+
+    assertion = runner.invoke(
+        app,
+        [
+            "assert",
+            str(replay_path),
+            "--candidate",
+            str(replay_path),
+            "--json",
+        ],
+    )
+    assert assertion.exit_code == 0, assertion.output
+    payload = json.loads(assertion.stdout.strip())
+    assert payload["status"] == "pass"
+    assert payload["summary"]["identical"] == len(source_run.steps)
+
+
+def test_transparent_replay_parity_fixed_seed_clock(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_path = _capture_transparent_fixture(tmp_path, "transparent-parity", monkeypatch=monkeypatch)
+    runner = CliRunner()
+    replay_a = tmp_path / "transparent-parity-a.rpk"
+    replay_b = tmp_path / "transparent-parity-b.rpk"
+
+    replay_one = runner.invoke(
+        app,
+        [
+            "replay",
+            str(source_path),
+            "--out",
+            str(replay_a),
+            "--seed",
+            "23",
+            "--fixed-clock",
+            "2026-02-23T00:00:00Z",
+        ],
+    )
+    assert replay_one.exit_code == 0, replay_one.output
+
+    replay_two = runner.invoke(
+        app,
+        [
+            "replay",
+            str(source_path),
+            "--out",
+            str(replay_b),
+            "--seed",
+            "23",
+            "--fixed-clock",
+            "2026-02-23T00:00:00Z",
+        ],
+    )
+    assert replay_two.exit_code == 0, replay_two.output
+    assert replay_a.read_bytes() == replay_b.read_bytes()
