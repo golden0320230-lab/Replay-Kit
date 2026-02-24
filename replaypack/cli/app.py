@@ -93,6 +93,10 @@ from replaypack.snapshot import (
     assert_snapshot_artifact,
     update_snapshot_artifact,
 )
+from replaypack.transparent_macos import (
+    TransparentControllerError,
+    TransparentMacOSController,
+)
 from replaypack.ui import UIServerConfig, build_ui_url, start_ui_server
 
 app = typer.Typer(help="ReplayKit CLI")
@@ -880,6 +884,36 @@ def _transparent_state_parent_writable(state_path: Path) -> bool:
     return os.access(state_path.parent, os.W_OK)
 
 
+def _transparent_execute_mutations_enabled() -> bool:
+    raw = os.getenv("REPLAYKIT_TRANSPARENT_EXECUTE", "")
+    normalized = raw.strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def _transparent_listener_host() -> str:
+    return "127.0.0.1"
+
+
+def _transparent_listener_port() -> int:
+    return 0
+
+
+def _transparent_is_stale_running_state(raw_state: dict[str, Any]) -> bool:
+    raw_mode = str(raw_state.get("mode", "")).strip().lower()
+    raw_status = str(raw_state.get("status", "")).strip().lower()
+    pid = _coerce_pid(raw_state.get("pid"))
+    return raw_mode == "transparent" and raw_status == "running" and pid > 0 and not is_pid_running(pid)
+
+
+def _transparent_rollback_result(
+    raw_state: dict[str, Any],
+    *,
+    execute_mutations: bool,
+) -> dict[str, Any]:
+    controller = TransparentMacOSController(execute=execute_mutations)
+    return controller.rollback(raw_state.get("rollback_handles"))
+
+
 def _transparent_check_payload(
     *,
     check_id: str,
@@ -1027,8 +1061,9 @@ def listen_transparent_start(
         help="Emit machine-readable transparent listener status.",
     ),
 ) -> None:
-    """Start transparent-mode scaffolding session (macOS MVP)."""
+    """Start transparent-mode interception controller (macOS MVP)."""
     state_path = Path(state_file)
+    execute_mutations = _transparent_execute_mutations_enabled()
     if _transparent_platform_name() != "darwin":
         message = "listen transparent start failed: macOS required for transparent MVP."
         payload = {
@@ -1047,6 +1082,8 @@ def listen_transparent_start(
         raise typer.Exit(code=2)
 
     raw_state = load_listener_state(state_path)
+    stale_cleanup = False
+    stale_rollback_attempted = 0
     if raw_state is not None:
         raw_mode = str(raw_state.get("mode", "")).strip().lower()
         raw_status = str(raw_state.get("status", "")).strip().lower()
@@ -1068,23 +1105,82 @@ def listen_transparent_start(
                 _echo(message, err=True)
             raise typer.Exit(code=2)
         if raw_status == "running":
-            message = "listen transparent start failed: transparent listener is already running."
-            payload = {
-                "status": "error",
-                "exit_code": 2,
-                "message": message,
-                "artifact_path": None,
-                "mode": "transparent",
-                "state_file": str(state_path),
-                "listener_session_id": raw_state.get("listener_session_id"),
-            }
-            if json_output:
-                _echo_json(payload)
+            if _transparent_is_stale_running_state(raw_state):
+                rollback_result = _transparent_rollback_result(
+                    raw_state,
+                    execute_mutations=execute_mutations,
+                )
+                stale_rollback_attempted = int(rollback_result.get("attempted", 0) or 0)
+                if not rollback_result["ok"]:
+                    message = (
+                        "listen transparent start failed: stale transparent state rollback failed."
+                    )
+                    payload = {
+                        "status": "error",
+                        "exit_code": 1,
+                        "message": message,
+                        "artifact_path": None,
+                        "mode": "transparent",
+                        "mvp_platform": "macos",
+                        "state_file": str(state_path),
+                        "stale_cleanup": False,
+                        "rollback_attempted": stale_rollback_attempted,
+                        "rollback_failures": rollback_result["failures"],
+                        "execute_mutations": execute_mutations,
+                    }
+                    if json_output:
+                        _echo_json(payload)
+                    else:
+                        _echo(message, err=True)
+                    raise typer.Exit(code=1)
+                remove_listener_state(state_path)
+                stale_cleanup = True
             else:
-                _echo(message, err=True)
-            raise typer.Exit(code=2)
+                message = "listen transparent start failed: transparent listener is already running."
+                payload = {
+                    "status": "error",
+                    "exit_code": 2,
+                    "message": message,
+                    "artifact_path": None,
+                    "mode": "transparent",
+                    "state_file": str(state_path),
+                    "listener_session_id": raw_state.get("listener_session_id"),
+                }
+                if json_output:
+                    _echo_json(payload)
+                else:
+                    _echo(message, err=True)
+                raise typer.Exit(code=2)
+
+    listener_host = _transparent_listener_host()
+    listener_port = _transparent_listener_port()
+    controller = TransparentMacOSController(execute=execute_mutations)
+    try:
+        apply_result = controller.apply(
+            listener_host=listener_host,
+            listener_port=listener_port,
+        )
+    except TransparentControllerError as error:
+        message = "listen transparent start failed: required intercept operation failed."
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "message": message,
+            "artifact_path": None,
+            "mode": "transparent",
+            "mvp_platform": "macos",
+            "state_file": str(state_path),
+            "execute_mutations": execute_mutations,
+            "failures": error.failures,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1) from error
 
     session_id = f"transparent-{int(time.time() * 1000)}"
+    started_at_unix_ms = int(time.time() * 1000)
     write_listener_state(
         state_path,
         {
@@ -1092,24 +1188,37 @@ def listen_transparent_start(
             "mode": "transparent",
             "listener_session_id": session_id,
             "mvp_platform": "macos",
-            "backend": "macos-mvp-scaffold",
-            "phase": "contract-scaffolding",
+            "backend": "macos-intercept-controller",
+            "phase": "safe-apply",
             "pid": 0,
-            "rollback_handles": [],
-            "started_at_unix_ms": int(time.time() * 1000),
+            "rollback_handles": apply_result["rollback_handles"],
+            "started_at_unix_ms": started_at_unix_ms,
+            "intercept_apply_executed": apply_result["executed"],
+            "intercept_operation_count": apply_result["operation_count"],
+            "listener_host": listener_host,
+            "listener_port": listener_port,
         },
     )
     payload = {
         "status": "ok",
         "exit_code": 0,
-        "message": "transparent listener started (scaffold)",
+        "message": "transparent listener started",
         "artifact_path": None,
         "mode": "transparent",
         "mvp_platform": "macos",
         "state_file": str(state_path),
         "listener_session_id": session_id,
         "running": True,
-        "backend": "macos-mvp-scaffold",
+        "backend": "macos-intercept-controller",
+        "stale_cleanup": stale_cleanup,
+        "rollback_attempted": stale_rollback_attempted,
+        "rollback_handle_count": len(apply_result["rollback_handles"]),
+        "intercept_apply_executed": apply_result["executed"],
+        "intercept_operation_count": apply_result["operation_count"],
+        "listener_host": listener_host,
+        "listener_port": listener_port,
+        "execute_mutations": execute_mutations,
+        "started_at_unix_ms": started_at_unix_ms,
     }
     if json_output:
         _echo_json(payload)
@@ -1130,7 +1239,7 @@ def listen_transparent_status(
         help="Emit machine-readable transparent listener status.",
     ),
 ) -> None:
-    """Inspect transparent-mode scaffolding status (macOS MVP)."""
+    """Inspect transparent-mode interception status (macOS MVP)."""
     state_path = Path(state_file)
     raw_state = load_listener_state(state_path)
     if raw_state is None:
@@ -1142,6 +1251,7 @@ def listen_transparent_status(
             "mode": "transparent",
             "state_file": str(state_path),
             "running": False,
+            "stale_cleanup": False,
         }
         if json_output:
             _echo_json(payload)
@@ -1167,6 +1277,56 @@ def listen_transparent_status(
             _echo(message, err=True)
         raise typer.Exit(code=2)
 
+    execute_mutations = _transparent_execute_mutations_enabled()
+    if _transparent_is_stale_running_state(raw_state):
+        rollback_result = _transparent_rollback_result(
+            raw_state,
+            execute_mutations=execute_mutations,
+        )
+        rollback_attempted = int(rollback_result.get("attempted", 0) or 0)
+        if rollback_result["ok"]:
+            remove_listener_state(state_path)
+            payload = {
+                "status": "ok",
+                "exit_code": 0,
+                "message": "transparent listener is stopped (stale state cleaned)",
+                "artifact_path": None,
+                "mode": "transparent",
+                "mvp_platform": "macos",
+                "state_file": str(state_path),
+                "running": False,
+                "stale_cleanup": True,
+                "rollback_attempted": rollback_attempted,
+                "rollback_failures": [],
+                "execute_mutations": execute_mutations,
+            }
+            if json_output:
+                _echo_json(payload)
+            else:
+                _echo(payload["message"])
+            return
+
+        message = "listen transparent status failed: stale-state rollback failed."
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "message": message,
+            "artifact_path": None,
+            "mode": "transparent",
+            "mvp_platform": "macos",
+            "state_file": str(state_path),
+            "running": False,
+            "stale_cleanup": False,
+            "rollback_attempted": rollback_attempted,
+            "rollback_failures": rollback_result["failures"],
+            "execute_mutations": execute_mutations,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1)
+
     running = str(raw_state.get("status", "")).strip().lower() == "running"
     payload = {
         "status": "ok",
@@ -1180,6 +1340,13 @@ def listen_transparent_status(
         "listener_session_id": raw_state.get("listener_session_id"),
         "backend": raw_state.get("backend"),
         "phase": raw_state.get("phase"),
+        "stale_cleanup": False,
+        "rollback_handle_count": len(raw_state.get("rollback_handles", []))
+        if isinstance(raw_state.get("rollback_handles"), list)
+        else 0,
+        "intercept_apply_executed": bool(raw_state.get("intercept_apply_executed", False)),
+        "intercept_operation_count": int(raw_state.get("intercept_operation_count", 0) or 0),
+        "execute_mutations": execute_mutations,
     }
     if json_output:
         _echo_json(payload)
@@ -1200,7 +1367,7 @@ def listen_transparent_stop(
         help="Emit machine-readable transparent listener status.",
     ),
 ) -> None:
-    """Stop transparent-mode scaffolding session (macOS MVP)."""
+    """Stop transparent-mode interception session (macOS MVP)."""
     state_path = Path(state_file)
     raw_state = load_listener_state(state_path)
     if raw_state is None:
@@ -1212,6 +1379,7 @@ def listen_transparent_stop(
             "mode": "transparent",
             "state_file": str(state_path),
             "running": False,
+            "stale_cleanup": False,
         }
         if json_output:
             _echo_json(payload)
@@ -1236,6 +1404,35 @@ def listen_transparent_stop(
             _echo(message, err=True)
         raise typer.Exit(code=2)
 
+    execute_mutations = _transparent_execute_mutations_enabled()
+    rollback_result = _transparent_rollback_result(
+        raw_state,
+        execute_mutations=execute_mutations,
+    )
+    rollback_attempted = int(rollback_result.get("attempted", 0) or 0)
+    if not rollback_result["ok"]:
+        message = "listen transparent stop failed: rollback operation failed."
+        payload = {
+            "status": "error",
+            "exit_code": 1,
+            "message": message,
+            "artifact_path": None,
+            "mode": "transparent",
+            "mvp_platform": "macos",
+            "state_file": str(state_path),
+            "listener_session_id": raw_state.get("listener_session_id"),
+            "running": True,
+            "stale_cleanup": False,
+            "rollback_attempted": rollback_attempted,
+            "rollback_failures": rollback_result["failures"],
+            "execute_mutations": execute_mutations,
+        }
+        if json_output:
+            _echo_json(payload)
+        else:
+            _echo(message, err=True)
+        raise typer.Exit(code=1)
+
     session_id = raw_state.get("listener_session_id")
     remove_listener_state(state_path)
     payload = {
@@ -1248,6 +1445,10 @@ def listen_transparent_stop(
         "state_file": str(state_path),
         "listener_session_id": session_id,
         "running": False,
+        "stale_cleanup": False,
+        "rollback_attempted": rollback_attempted,
+        "rollback_failures": [],
+        "execute_mutations": execute_mutations,
     }
     if json_output:
         _echo_json(payload)
