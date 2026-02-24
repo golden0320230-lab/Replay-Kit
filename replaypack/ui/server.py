@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import subprocess
+import sys
 import threading
-from typing import Iterator
+from typing import Any, Iterator
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from replaypack.artifact import ArtifactError, read_artifact
@@ -22,6 +24,8 @@ class UIServerConfig:
     host: str = "127.0.0.1"
     port: int = 4310
     base_dir: Path = Path.cwd()
+    listener_state_file: Path = Path("runs/passive/ui-listener-state.json")
+    listener_out_file: Path = Path("runs/passive/ui-listener-capture.rpk")
 
 
 def build_ui_url(
@@ -62,8 +66,53 @@ def list_local_artifacts(base_dir: Path) -> list[str]:
     return output
 
 
+def _resolve_runtime_path(base_dir: Path, configured: Path) -> Path:
+    if configured.is_absolute():
+        return configured
+    return (base_dir / configured).resolve()
+
+
+def _run_listener_cli(base_dir: Path, args: list[str]) -> tuple[int, dict[str, Any]]:
+    command = [sys.executable, "-m", "replaypack", "listen", *args, "--json"]
+    completed = subprocess.run(
+        command,
+        cwd=str(base_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+
+    payload: dict[str, Any]
+    if stdout:
+        try:
+            payload = json.loads(stdout.splitlines()[-1])
+        except json.JSONDecodeError:
+            payload = {
+                "status": "error",
+                "exit_code": completed.returncode,
+                "message": stdout,
+            }
+    else:
+        payload = {
+            "status": "error",
+            "exit_code": completed.returncode,
+            "message": stderr or "listener command produced no output",
+        }
+
+    payload.setdefault("exit_code", completed.returncode)
+    if completed.returncode != 0 and payload.get("status") == "ok":
+        payload["status"] = "error"
+    if stderr and "stderr" not in payload:
+        payload["stderr"] = stderr
+    return completed.returncode, payload
+
+
 def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
     base_dir = config.base_dir.resolve()
+    listener_state_path = _resolve_runtime_path(base_dir, config.listener_state_file)
+    listener_out_path = _resolve_runtime_path(base_dir, config.listener_out_file)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -82,6 +131,24 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
 
             if route == "/api/diff":
                 self._handle_diff(query)
+                return
+
+            if route == "/api/listener/status":
+                self._handle_listener_status()
+                return
+
+            self._write_json(404, {"error": "Not found"})
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            route = parsed.path
+
+            if route == "/api/listener/start":
+                self._handle_listener_start()
+                return
+
+            if route == "/api/listener/stop":
+                self._handle_listener_stop()
                 return
 
             self._write_json(404, {"error": "Not found"})
@@ -115,6 +182,49 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             payload["left_path"] = _display_path(base_dir, left_path)
             payload["right_path"] = _display_path(base_dir, right_path)
             self._write_json(200, payload)
+
+        def _handle_listener_status(self) -> None:
+            code, payload = _run_listener_cli(
+                base_dir,
+                [
+                    "status",
+                    "--state-file",
+                    str(listener_state_path),
+                ],
+            )
+            payload["ui_listener_state_file"] = _display_path(base_dir, listener_state_path)
+            payload["ui_listener_out_file"] = _display_path(base_dir, listener_out_path)
+            self._write_json(200 if code == 0 else 400, payload)
+
+        def _handle_listener_start(self) -> None:
+            listener_state_path.parent.mkdir(parents=True, exist_ok=True)
+            listener_out_path.parent.mkdir(parents=True, exist_ok=True)
+            code, payload = _run_listener_cli(
+                base_dir,
+                [
+                    "start",
+                    "--state-file",
+                    str(listener_state_path),
+                    "--out",
+                    str(listener_out_path),
+                ],
+            )
+            payload["ui_listener_state_file"] = _display_path(base_dir, listener_state_path)
+            payload["ui_listener_out_file"] = _display_path(base_dir, listener_out_path)
+            self._write_json(200 if code == 0 else 400, payload)
+
+        def _handle_listener_stop(self) -> None:
+            code, payload = _run_listener_cli(
+                base_dir,
+                [
+                    "stop",
+                    "--state-file",
+                    str(listener_state_path),
+                ],
+            )
+            payload["ui_listener_state_file"] = _display_path(base_dir, listener_state_path)
+            payload["ui_listener_out_file"] = _display_path(base_dir, listener_out_path)
+            self._write_json(200 if code == 0 else 400, payload)
 
         def _write_html(self, html: str) -> None:
             body = html.encode("utf-8")
@@ -575,6 +685,9 @@ def _render_index_html() -> str:
 
     <div class="actions">
       <button id="loadButton" class="primary" aria-label="Load diff">Load Diff</button>
+      <button id="listenerStartButton" aria-label="Start passive listener">Start Listening</button>
+      <button id="listenerStopButton" aria-label="Stop passive listener">Stop Listening</button>
+      <button id="listenerStatusButton" aria-label="Refresh passive listener status">Listener Status</button>
       <button id="jumpButton" aria-label="Jump to first divergence" disabled>Jump To First Divergence</button>
       <button id="prevStepButton" aria-label="Previous visible step" disabled>Prev Step</button>
       <button id="nextStepButton" aria-label="Next visible step" disabled>Next Step</button>
@@ -659,6 +772,9 @@ def _render_index_html() -> str:
     const prevFieldButton = document.getElementById("prevFieldButton");
     const nextFieldButton = document.getElementById("nextFieldButton");
     const copyPathButton = document.getElementById("copyPathButton");
+    const listenerStartButton = document.getElementById("listenerStartButton");
+    const listenerStopButton = document.getElementById("listenerStopButton");
+    const listenerStatusButton = document.getElementById("listenerStatusButton");
 
     function setStatus(message, isError = false) {
       statusEl.textContent = message;
@@ -714,6 +830,67 @@ def _render_index_html() -> str:
         }
       } catch (_err) {
         setStatus("Failed to load local artifact list.", true);
+      }
+    }
+
+    function setListenerControlsDisabled(disabled) {
+      listenerStartButton.disabled = disabled;
+      listenerStopButton.disabled = disabled;
+      listenerStatusButton.disabled = disabled;
+    }
+
+    function refreshArtifactInputsFromListener(payload) {
+      const outPath = payload ? (payload.artifact_out || payload.ui_listener_out_file) : null;
+      if (!outPath) {
+        return;
+      }
+      if (!leftInput.value) {
+        leftInput.value = outPath;
+      }
+      if (!rightInput.value) {
+        rightInput.value = outPath;
+      }
+    }
+
+    async function refreshListenerStatus() {
+      setListenerControlsDisabled(true);
+      try {
+        const res = await fetch("/api/listener/status");
+        const payload = await res.json();
+        if (!res.ok || payload.status === "error") {
+          setStatus(payload.message || "Listener status check failed.", true);
+          return;
+        }
+        const running = payload.running ? "running" : "stopped";
+        setStatus("Listener " + running + " (" + (payload.ui_listener_state_file || "state unknown") + ")");
+      } catch (_err) {
+        setStatus("Unable to fetch listener status from local server.", true);
+      } finally {
+        setListenerControlsDisabled(false);
+      }
+    }
+
+    async function listenerAction(action) {
+      setListenerControlsDisabled(true);
+      setStatus(action === "start" ? "Starting listener..." : "Stopping listener...");
+      try {
+        const res = await fetch("/api/listener/" + action, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const payload = await res.json();
+        if (!res.ok || payload.status === "error") {
+          setStatus(payload.message || ("Listener " + action + " failed."), true);
+          return;
+        }
+        refreshArtifactInputsFromListener(payload);
+        await loadArtifactOptions();
+        setStatus(payload.message || ("Listener " + action + " completed."));
+      } catch (_err) {
+        setStatus("Listener " + action + " request failed.", true);
+      } finally {
+        setListenerControlsDisabled(false);
       }
     }
 
@@ -1210,6 +1387,9 @@ def _render_index_html() -> str:
     }
 
     document.getElementById("loadButton").addEventListener("click", loadDiff);
+    listenerStartButton.addEventListener("click", () => listenerAction("start"));
+    listenerStopButton.addEventListener("click", () => listenerAction("stop"));
+    listenerStatusButton.addEventListener("click", refreshListenerStatus);
     jumpButton.addEventListener("click", jumpToFirstDivergence);
     prevStepButton.addEventListener("click", () => stepNav(-1));
     nextStepButton.addEventListener("click", () => stepNav(1));
@@ -1222,6 +1402,7 @@ def _render_index_html() -> str:
 
     parseQueryDefaults();
     loadArtifactOptions();
+    refreshListenerStatus();
   </script>
 </body>
 </html>
