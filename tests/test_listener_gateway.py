@@ -8,6 +8,7 @@ from typing import Any
 
 import requests
 from typer.testing import CliRunner
+import zstandard as zstd
 
 from replaypack.artifact import read_artifact
 from replaypack.cli.app import app
@@ -285,6 +286,120 @@ def test_listener_gateway_captures_openai_responses_routes(tmp_path: Path) -> No
         "ReplayKit listener response",
         "ReplayKit listener response",
     ]
+
+
+def test_listener_gateway_decodes_zstd_encoded_openai_responses_payload(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        request_payload = {"model": "gpt-5.3-codex", "input": "say hello"}
+        encoded_payload = zstd.ZstdCompressor().compress(
+            json.dumps(request_payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        )
+        response = requests.post(
+            f"{base_url}/responses",
+            data=encoded_payload,
+            headers={
+                "content-type": "application/json",
+                "content-encoding": "zstd",
+            },
+            timeout=2.0,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["object"] == "response"
+        assert payload["status"] == "completed"
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    assert len(run.steps) == 2
+    request_step = run.steps[0]
+    assert request_step.type == "model.request"
+    assert request_step.metadata.get("path") == "/responses"
+    assert request_step.input["payload"]["model"] == "gpt-5.3-codex"
+    assert request_step.input["payload"]["input"] == "say hello"
+
+
+def test_listener_gateway_reports_unsupported_content_encoding(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        response = requests.post(
+            f"{base_url}/responses",
+            data=json.dumps({"model": "gpt-5.3-codex", "input": "say hello"}).encode("utf-8"),
+            headers={
+                "content-type": "application/json",
+                "content-encoding": "br",
+            },
+            timeout=2.0,
+        )
+        assert response.status_code == 502
+        body = response.json()
+        assert body["error"]["type"] == "listener_gateway_error"
+        assert "unsupported_content_encoding:br" in body["error"]["message"]
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    assert [step.type for step in run.steps] == ["model.request", "model.response"]
+    assert run.steps[-1].output["status_code"] == 502
 
 
 def test_listener_gateway_error_path_returns_502_and_captures_failure(tmp_path: Path) -> None:
