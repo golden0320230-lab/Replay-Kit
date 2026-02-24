@@ -34,6 +34,8 @@ class ProviderResponse:
 
 def detect_provider(path: str) -> str | None:
     normalized = path.strip()
+    if normalized in {"/responses", "/v1/responses"}:
+        return "openai"
     if normalized == "/v1/chat/completions":
         return "openai"
     if normalized == "/v1/messages":
@@ -99,11 +101,35 @@ def build_provider_response(
 
     text = "ReplayKit listener response"
     if request.provider == "openai":
-        response = {
-            "id": f"chatcmpl-listener-{sequence:06d}",
-            "object": "chat.completion",
-            "choices": [{"message": {"role": "assistant", "content": text}}],
-        }
+        if request.path in {"/responses", "/v1/responses"}:
+            response = {
+                "id": f"resp-listener-{sequence:06d}",
+                "object": "response",
+                "status": "completed",
+                "model": request.model or "gpt-4o-mini",
+                "output": [
+                    {
+                        "id": f"msg-listener-{sequence:06d}",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": text,
+                                "annotations": [],
+                            }
+                        ],
+                    }
+                ],
+                "output_text": text,
+            }
+        else:
+            response = {
+                "id": f"chatcmpl-listener-{sequence:06d}",
+                "object": "chat.completion",
+                "choices": [{"message": {"role": "assistant", "content": text}}],
+            }
     elif request.provider == "anthropic":
         response = {
             "id": f"msg-listener-{sequence:06d}",
