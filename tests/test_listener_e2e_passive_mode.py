@@ -3,6 +3,7 @@ from pathlib import Path
 
 import requests
 from typer.testing import CliRunner
+import zstandard as zstd
 
 from replaypack.artifact import read_artifact
 from replaypack.cli.app import app
@@ -260,3 +261,86 @@ def test_passive_listener_e2e_openai_responses_routes(tmp_path: Path) -> None:
     summary = json.loads(assertion.stdout.strip())
     assert summary["status"] == "pass"
     assert summary["summary"]["identical"] == 4
+
+
+def test_passive_listener_e2e_codex_models_preflight_and_encoded_response(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-codex-state.json"
+    capture_path = tmp_path / "listener-codex-capture.rpk"
+    replay_path = tmp_path / "listener-codex-replay.rpk"
+
+    host, port = _start_listener(runner, state_file=state_file, out_path=capture_path)
+    base_url = f"http://{host}:{port}"
+
+    try:
+        models = requests.get(
+            f"{base_url}/models",
+            params={"client_version": "0.104.0"},
+            timeout=2.0,
+        )
+        assert models.status_code == 200
+        models_payload = models.json()
+        assert models_payload["object"] == "list"
+        model_ids = {item["id"] for item in models_payload["data"]}
+        assert "gpt-5.3-codex" in model_ids
+
+        encoded_payload = zstd.ZstdCompressor().compress(
+            json.dumps(
+                {"model": "gpt-5.3-codex", "input": "say hello"},
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        )
+        response = requests.post(
+            f"{base_url}/responses",
+            data=encoded_payload,
+            headers={
+                "content-type": "application/json",
+                "content-encoding": "zstd",
+            },
+            timeout=2.0,
+        )
+        assert response.status_code == 200
+        response_payload = response.json()
+        assert response_payload["object"] == "response"
+        assert response_payload["status"] == "completed"
+    finally:
+        _stop_listener(runner, state_file=state_file)
+
+    run = read_artifact(capture_path)
+    assert [step.type for step in run.steps] == ["model.request", "model.response"]
+    assert [step.metadata.get("path") for step in run.steps] == ["/responses", "/responses"]
+    assert run.steps[0].input["payload"]["model"] == "gpt-5.3-codex"
+    assert run.steps[0].input["payload"]["input"] == "say hello"
+
+    replay = runner.invoke(
+        app,
+        [
+            "replay",
+            str(capture_path),
+            "--out",
+            str(replay_path),
+            "--seed",
+            "19",
+            "--fixed-clock",
+            "2026-02-23T00:00:00Z",
+        ],
+    )
+    assert replay.exit_code == 0, replay.output
+
+    assertion = runner.invoke(
+        app,
+        [
+            "assert",
+            str(replay_path),
+            "--candidate",
+            str(replay_path),
+            "--json",
+        ],
+    )
+    assert assertion.exit_code == 0, assertion.output
+    summary = json.loads(assertion.stdout.strip())
+    assert summary["status"] == "pass"
+    assert summary["summary"]["identical"] == 2
