@@ -50,6 +50,7 @@ As of **February 23, 2026**, ReplayKit currently provides:
 - `agent` command group with `providers` and `capture` subcommands for coding-agent session timeline capture.
 - Built-in `agent capture` adapters: `codex` and `claude-code` (fixture-runner backed for deterministic CI and local debugging).
 - Passive listener/interceptor mode via `listen start|stop|status|env` for out-of-process provider/agent capture.
+- macOS transparent listener lifecycle via `listen transparent doctor|start|status|stop` with rollback journaling and stale-session cleanup.
 - Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
 - Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.
 - Stable Python API entrypoint (`import replaykit`) and tool decorator capture (`@replaykit.tool`) for library integrations.
@@ -108,6 +109,29 @@ Operator runbook with verification, streaming notes, and recovery steps:
 Passive-mode release sign-off criteria are tracked in
 `docs/PASSIVE_MODE_RELEASE_CHECKLIST.md`.
 
+## Transparent Listener Mode (macOS MVP)
+
+Transparent mode manages macOS interception lifecycle and rollback:
+
+```bash
+replaykit listen transparent doctor --state-file runs/transparent/state.json --json
+replaykit listen transparent start --state-file runs/transparent/state.json --json
+replaykit listen transparent status --state-file runs/transparent/state.json --json
+replaykit listen transparent stop --state-file runs/transparent/state.json --json
+```
+
+Current MVP behavior:
+
+- macOS only.
+- Uses a dedicated transparent state file (do not share with passive `listen` state file).
+- `REPLAYKIT_TRANSPARENT_EXECUTE` is off by default (CI-safe scaffolding mode).
+- Set `REPLAYKIT_TRANSPARENT_EXECUTE=1` to execute OS mutations; root privileges are typically required.
+- Artifact capture still comes from passive listener daemon commands (`listen start|stop`).
+- For deterministic traffic capture today, keep using `listen env` (or explicit provider base URL overrides) until full no-env routing is completed.
+
+Transparent-mode operator runbook:
+`docs/PASSIVE_LISTENER.md`
+
 ## Installation
 
 Install from source (current workflow):
@@ -160,6 +184,10 @@ replaykit listen start --json
 replaykit listen status --json
 replaykit listen env --shell bash
 replaykit listen stop --json
+replaykit listen transparent doctor --json
+replaykit listen transparent start --json
+replaykit listen transparent status --json
+replaykit listen transparent stop --json
 replaykit live-compare baseline.rpk --live-demo
 replaykit snapshot my-flow --candidate runs/candidate.rpk
 replaykit benchmark --source examples/runs/m2_capture_boundaries.rpk

@@ -60,6 +60,45 @@ Lifecycle behavior:
 - `listen stop` is idempotent and safe to call repeatedly.
 - `listen env` output is deterministic and copy/paste-safe for both bash and PowerShell.
 
+## Transparent Mode (macOS MVP)
+
+Transparent mode adds macOS interception lifecycle control with rollback safety:
+
+```bash
+replaykit listen transparent doctor --state-file runs/transparent/state.json --json
+replaykit listen transparent start --state-file runs/transparent/state.json --json
+replaykit listen transparent status --state-file runs/transparent/state.json --json
+replaykit listen transparent stop --state-file runs/transparent/state.json --json
+```
+
+Operational model:
+
+- Transparent and passive modes use different state files; keep them separate.
+- Transparent mode controls OS interception state; passive `listen start|stop` controls artifact capture daemon.
+- `REPLAYKIT_TRANSPARENT_EXECUTE` is disabled by default for safe dry-run behavior.
+- To execute OS mutation steps, set `REPLAYKIT_TRANSPARENT_EXECUTE=1` and run with required privileges (commonly root on macOS).
+
+macOS MVP runbook (command-validated):
+
+```bash
+mkdir -p runs/transparent runs/passive
+replaykit listen transparent doctor --state-file runs/transparent/state.json --json
+replaykit listen transparent start --state-file runs/transparent/state.json --json
+replaykit listen start --state-file runs/passive/state.json --out runs/passive/transparent-capture.rpk --json
+eval "$(replaykit listen env --state-file runs/passive/state.json --shell bash)"
+codex exec --json "say hello from transparent runbook"
+replaykit listen stop --state-file runs/passive/state.json --json
+replaykit listen transparent stop --state-file runs/transparent/state.json --json
+replaykit listen transparent status --state-file runs/transparent/state.json --json
+replaykit assert runs/passive/transparent-capture.rpk --candidate runs/passive/transparent-capture.rpk --json
+```
+
+Current transparent limitations:
+
+- macOS-only support.
+- Default mode is rollback-safe scaffolding (`REPLAYKIT_TRANSPARENT_EXECUTE` off).
+- Full no-env background routing is not complete; use `listen env` or explicit base URL overrides for deterministic capture today.
+
 ## Typical Workflow
 
 1. Start listener:
@@ -198,6 +237,17 @@ For provider requests with `stream=true`, passive listener artifacts store:
   - Verify agent payload is JSON object/list/JSONL with expected `type` fields.
 - `capture_errors` increasing:
   - Inspect `error.event` steps in artifact and check CI/uploaded logs under `runs/passive`.
+- `listen transparent start failed: required intercept operation failed`:
+  - Run `replaykit listen transparent doctor --state-file runs/transparent/state.json --json` and resolve failed checks.
+  - If applying real intercept rules, retry with privilege escalation and `REPLAYKIT_TRANSPARENT_EXECUTE=1`.
+- `listen transparent ... state file belongs to passive listener mode`:
+  - Use separate state paths, for example:
+    - transparent: `runs/transparent/state.json`
+    - passive: `runs/passive/state.json`
+- `listen transparent stop failed: rollback operation failed`:
+  - Re-run stop with the same `REPLAYKIT_TRANSPARENT_EXECUTE` value used at start.
+  - Verify status and stale cleanup:
+    - `replaykit listen transparent status --state-file runs/transparent/state.json --json`
 - `codex exec` shows `unsupported path ... /responses`:
   - Ensure your ReplayKit build includes OpenAI Responses routes (`/responses`, `/v1/responses`).
   - Re-run `listen env` in the same shell where `codex exec` runs.
