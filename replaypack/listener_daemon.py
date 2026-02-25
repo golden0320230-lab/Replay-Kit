@@ -57,6 +57,22 @@ _UPSTREAM_ENV_BY_PROVIDER = {
 _UPSTREAM_ENV_FALLBACK = "REPLAYKIT_PROVIDER_UPSTREAM_URL"
 _UPSTREAM_TIMEOUT_ENV = "REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS"
 _UPSTREAM_DEFAULT_TIMEOUT_SECONDS = 5.0
+_OPENAI_RESPONSES_PATHS = {"/responses", "/v1/responses"}
+_OPENAI_TOOL_REQUEST_TYPES = {
+    "function_call",
+    "tool_call",
+    "computer_call",
+    "code_interpreter_call",
+    "mcp_call",
+}
+_OPENAI_TOOL_RESPONSE_TYPES = {
+    "function_call_output",
+    "tool_result",
+    "tool_response",
+    "computer_call_output",
+    "code_interpreter_call_output",
+    "mcp_result",
+}
 
 
 def _resolve_provider_upstream_base_url(provider: str) -> str | None:
@@ -81,6 +97,81 @@ def _resolve_upstream_timeout_seconds() -> float:
     if parsed <= 0:
         return _UPSTREAM_DEFAULT_TIMEOUT_SECONDS
     return min(parsed, 120.0)
+
+
+def _extract_openai_tool_requests_from_response(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    output_items = payload.get("output")
+    if not isinstance(output_items, list):
+        return []
+    derived: list[dict[str, Any]] = []
+    for item in output_items:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type", "")).strip().lower()
+        if item_type not in _OPENAI_TOOL_REQUEST_TYPES:
+            continue
+        tool_name = str(
+            item.get("name")
+            or item.get("tool")
+            or item.get("tool_name")
+            or item.get("recipient_name")
+            or item_type
+        )
+        call_id = item.get("call_id") or item.get("id")
+        arguments = item.get("arguments")
+        if arguments is None and "input" in item:
+            arguments = item.get("input")
+        derived.append(
+            {
+                "type": item_type,
+                "tool": tool_name,
+                "call_id": str(call_id) if call_id is not None else None,
+                "arguments": arguments,
+                "event": item,
+            }
+        )
+    return derived
+
+
+def _extract_openai_tool_responses_from_request(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    request_input = payload.get("input")
+    if isinstance(request_input, list):
+        input_items = request_input
+    elif isinstance(request_input, dict):
+        input_items = [request_input]
+    else:
+        return []
+    derived: list[dict[str, Any]] = []
+    for item in input_items:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type", "")).strip().lower()
+        if item_type not in _OPENAI_TOOL_RESPONSE_TYPES:
+            continue
+        tool_name = str(
+            item.get("name")
+            or item.get("tool")
+            or item.get("tool_name")
+            or item_type
+        )
+        call_id = item.get("call_id") or item.get("id")
+        result_payload = item.get("output")
+        if result_payload is None and "result" in item:
+            result_payload = item.get("result")
+        if result_payload is None and "content" in item:
+            result_payload = item.get("content")
+        if result_payload is None:
+            result_payload = item
+        derived.append(
+            {
+                "type": item_type,
+                "tool": tool_name,
+                "call_id": str(call_id) if call_id is not None else None,
+                "result": result_payload,
+                "event": item,
+            }
+        )
+    return derived
 
 
 def _forward_provider_request(
@@ -276,6 +367,40 @@ class _ListenerRunRecorder:
                     timestamp=_utc_now(),
                 )
             )
+            if provider == "openai" and path in _OPENAI_RESPONSES_PATHS:
+                for tool_response in _extract_openai_tool_responses_from_request(request.payload):
+                    self._run.steps.append(
+                        Step(
+                            id=self._next_step_id(),
+                            type="tool.response",
+                            input=redact_listener_value(
+                                {
+                                    "tool": tool_response["tool"],
+                                    "call_id": tool_response["call_id"],
+                                    "request_id": request.request_id,
+                                }
+                            ),
+                            output=redact_listener_value(
+                                {
+                                    "result": tool_response["result"],
+                                    "event": tool_response["event"],
+                                }
+                            ),
+                            metadata=redact_listener_value(
+                                {
+                                    "provider": provider,
+                                    "path": path,
+                                    "request_id": request.request_id,
+                                    "correlation_id": correlation_id,
+                                    "capture_mode": "passive",
+                                    "response_source": response_source,
+                                    "derived_from": "openai.responses.request_input",
+                                    "event_type": tool_response["type"],
+                                }
+                            ),
+                            timestamp=_utc_now(),
+                        )
+                    )
             self._run.steps.append(
                 Step(
                     id=self._next_step_id(),
@@ -308,6 +433,43 @@ class _ListenerRunRecorder:
                     timestamp=_utc_now(),
                 )
             )
+            if provider == "openai" and path in _OPENAI_RESPONSES_PATHS:
+                for tool_request in _extract_openai_tool_requests_from_response(
+                    normalized_response.response
+                ):
+                    self._run.steps.append(
+                        Step(
+                            id=self._next_step_id(),
+                            type="tool.request",
+                            input=redact_listener_value(
+                                {
+                                    "tool": tool_request["tool"],
+                                    "call_id": tool_request["call_id"],
+                                    "arguments": tool_request["arguments"],
+                                    "request_id": request.request_id,
+                                }
+                            ),
+                            output=redact_listener_value(
+                                {
+                                    "status": "captured",
+                                    "event": tool_request["event"],
+                                }
+                            ),
+                            metadata=redact_listener_value(
+                                {
+                                    "provider": provider,
+                                    "path": path,
+                                    "request_id": request.request_id,
+                                    "correlation_id": correlation_id,
+                                    "capture_mode": "passive",
+                                    "response_source": response_source,
+                                    "derived_from": "openai.responses.response_output",
+                                    "event_type": tool_request["type"],
+                                }
+                            ),
+                            timestamp=_utc_now(),
+                        )
+                    )
             self._persist_locked()
             return status_code, response_payload
 

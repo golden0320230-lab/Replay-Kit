@@ -50,6 +50,7 @@ As of **February 23, 2026**, ReplayKit currently provides:
 - `agent` command group with `providers` and `capture` subcommands for coding-agent session timeline capture.
 - Built-in `agent capture` adapters: `codex` and `claude-code` (fixture-runner backed for deterministic CI and local debugging).
 - Passive listener/interceptor mode via `listen start|stop|status|env` for out-of-process provider/agent capture.
+- Passive listener OpenAI Responses normalization that derives `tool.request/tool.response` steps when tool-call payloads are present.
 - macOS transparent listener lifecycle via `listen transparent doctor|start|status|stop` with rollback journaling and stale-session cleanup.
 - Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
 - Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.

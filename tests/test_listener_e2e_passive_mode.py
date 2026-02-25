@@ -1,5 +1,8 @@
 import json
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import threading
 
 import requests
 from typer.testing import CliRunner
@@ -51,6 +54,67 @@ def _stop_listener(runner: CliRunner, *, state_file: Path) -> None:
         ],
     )
     assert stop.exit_code == 0, stop.output
+
+
+@contextmanager
+def _fake_openai_upstream() -> str:
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path not in {"/responses", "/v1/responses"}:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":"unsupported path"}')
+                return
+            body = {
+                "id": "resp-upstream-000001",
+                "object": "response",
+                "status": "completed",
+                "model": "gpt-5.3-codex",
+                "output": [
+                    {
+                        "id": "fc-upstream-000001",
+                        "type": "function_call",
+                        "name": "shell",
+                        "call_id": "call-upstream-000001",
+                        "arguments": '{"command":"echo hi"}',
+                    },
+                    {
+                        "id": "msg-upstream-000001",
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "done",
+                                "annotations": [],
+                            }
+                        ],
+                    },
+                ],
+                "output_text": "done",
+            }
+            payload = json.dumps(body, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_passive_listener_e2e_non_stream_capture_replay_assert(tmp_path: Path) -> None:
@@ -273,6 +337,62 @@ def test_passive_listener_e2e_openai_responses_routes(tmp_path: Path) -> None:
     summary = json.loads(assertion.stdout.strip())
     assert summary["status"] == "pass"
     assert summary["summary"]["identical"] == 4
+
+
+def test_passive_listener_derives_tool_steps_from_openai_responses_payload(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-tool-steps-state.json"
+    capture_path = tmp_path / "listener-tool-steps-capture.rpk"
+
+    with _fake_openai_upstream() as upstream_url:
+        monkeypatch.setenv("REPLAYKIT_OPENAI_UPSTREAM_URL", upstream_url)
+        host, port = _start_listener(runner, state_file=state_file, out_path=capture_path)
+        base_url = f"http://{host}:{port}"
+        try:
+            response = requests.post(
+                f"{base_url}/responses",
+                json={
+                    "model": "gpt-5.3-codex",
+                    "input": [
+                        {
+                            "type": "function_call_output",
+                            "name": "shell",
+                            "call_id": "call-upstream-000001",
+                            "output": {"stdout": "hello"},
+                        }
+                    ],
+                },
+                timeout=2.0,
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["object"] == "response"
+            assert payload["status"] == "completed"
+        finally:
+            _stop_listener(runner, state_file=state_file)
+
+    run = read_artifact(capture_path)
+    assert [step.type for step in run.steps] == [
+        "model.request",
+        "tool.response",
+        "model.response",
+        "tool.request",
+    ]
+    tool_response = run.steps[1]
+    assert tool_response.input["tool"] == "shell"
+    assert tool_response.input["call_id"] == "call-upstream-000001"
+    assert tool_response.output["result"] == {"stdout": "hello"}
+    assert tool_response.metadata["derived_from"] == "openai.responses.request_input"
+
+    tool_request = run.steps[3]
+    assert tool_request.input["tool"] == "shell"
+    assert tool_request.input["call_id"] == "call-upstream-000001"
+    assert tool_request.metadata["derived_from"] == "openai.responses.response_output"
+    assert tool_request.metadata["event_type"] == "function_call"
+    assert tool_request.output["status"] == "captured"
 
 
 def test_passive_listener_e2e_codex_models_preflight_and_encoded_response(
