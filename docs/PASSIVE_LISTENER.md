@@ -24,6 +24,7 @@ Provider adapter normalization guarantees:
 - Every provider request/response pair is emitted as `model.request` then `model.response`.
 - Provider payload details are retained with deterministic key ordering for stable replay/diff output.
 - `correlation_id` and `request_id` metadata are propagated on both request and response steps.
+- For OpenAI `/responses` and `/v1/responses`, tool-call payload structures are normalized into derived `tool.request` and `tool.response` steps when present.
 
 ## Commands
 
