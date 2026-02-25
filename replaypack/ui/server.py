@@ -206,6 +206,10 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
                 self._handle_diff(query)
                 return
 
+            if route == "/api/step":
+                self._handle_step(query)
+                return
+
             if route == "/api/fs/list":
                 self._handle_fs_list(query)
                 return
@@ -262,6 +266,43 @@ def create_ui_server(config: UIServerConfig) -> ThreadingHTTPServer:
             payload = diff.to_dict()
             payload["left_path"] = _display_path(base_dir, left_path)
             payload["right_path"] = _display_path(base_dir, right_path)
+            self._write_json(200, payload)
+
+        def _handle_step(self, query: dict[str, list[str]]) -> None:
+            left_raw = _first(query.get("left"))
+            right_raw = _first(query.get("right"))
+            index_raw = _first(query.get("index"))
+
+            if not left_raw or not right_raw:
+                self._write_json(
+                    400,
+                    {
+                        "error": (
+                            "Missing required query params: left and right"
+                        )
+                    },
+                )
+                return
+            if not index_raw:
+                self._write_json(400, {"error": "Missing required query param: index"})
+                return
+
+            try:
+                index = _parse_step_index(index_raw)
+                left_path = _resolve_artifact_path(base_dir, left_raw)
+                right_path = _resolve_artifact_path(base_dir, right_raw)
+                left_run = read_artifact(left_path)
+                right_run = read_artifact(right_path)
+                payload = {
+                    "index": index,
+                    "left_path": _display_path(base_dir, left_path),
+                    "right_path": _display_path(base_dir, right_path),
+                    "left_step": _step_payload_at_index(left_run.steps, index),
+                    "right_step": _step_payload_at_index(right_run.steps, index),
+                }
+            except (FileNotFoundError, ArtifactError, ValueError) as error:
+                self._write_json(400, {"error": str(error)})
+                return
             self._write_json(200, payload)
 
         def _handle_fs_list(self, query: dict[str, list[str]]) -> None:
@@ -477,6 +518,26 @@ def _first(values: list[str] | None) -> str | None:
     if not values:
         return None
     return values[0]
+
+
+def _parse_step_index(raw_value: str) -> int:
+    try:
+        index = int(raw_value)
+    except ValueError as error:
+        raise ValueError("index must be a positive integer") from error
+    if index <= 0:
+        raise ValueError("index must be a positive integer")
+    return index
+
+
+def _step_payload_at_index(steps: list[Any], index: int) -> dict[str, Any] | None:
+    array_index = index - 1
+    if array_index < 0 or array_index >= len(steps):
+        return None
+    step = steps[array_index]
+    if hasattr(step, "to_dict"):
+        return step.to_dict()
+    return None
 
 
 def _render_index_html() -> str:
@@ -780,6 +841,11 @@ def _render_index_html() -> str:
       letter-spacing: 0.03em;
     }
 
+    .raw-pre {
+      min-height: 170px;
+      font-size: 0.76rem;
+    }
+
     .tree-node {
       margin: 3px 0;
       border-left: 2px solid #e5e2d8;
@@ -1001,6 +1067,16 @@ def _render_index_html() -> str:
       <h2 id="metaHeading">Metadata</h2>
       <div class="panel-body">
         <pre id="metaPanel">No diff loaded.</pre>
+        <div class="tree-columns">
+          <div class="tree-shell" aria-label="Left selected step raw payload">
+            <h3>Left Step Raw</h3>
+            <pre id="leftStepRaw" class="raw-pre">No selected step.</pre>
+          </div>
+          <div class="tree-shell" aria-label="Right selected step raw payload">
+            <h3>Right Step Raw</h3>
+            <pre id="rightStepRaw" class="raw-pre">No selected step.</pre>
+          </div>
+        </div>
         <div class="browser-toolbar">
           <input id="browserPath" name="browserPath" type="text" placeholder="Browse path (absolute or relative to repo)" />
           <button id="browserOpenButton" aria-label="Open browser path">Open</button>
@@ -1022,6 +1098,7 @@ def _render_index_html() -> str:
       selectedChangeIndex: null,
       browserCurrentPath: "",
       browserParentPath: "",
+      selectedRawStepPayload: null,
     };
 
     const statusEl = document.getElementById("status");
@@ -1038,6 +1115,8 @@ def _render_index_html() -> str:
     const leftTree = document.getElementById("leftTree");
     const rightTree = document.getElementById("rightTree");
     const metaPanel = document.getElementById("metaPanel");
+    const leftStepRaw = document.getElementById("leftStepRaw");
+    const rightStepRaw = document.getElementById("rightStepRaw");
     const selectedPath = document.getElementById("selectedPath");
     const browserPathInput = document.getElementById("browserPath");
     const browserList = document.getElementById("browserList");
@@ -1473,6 +1552,52 @@ def _render_index_html() -> str:
       });
     }
 
+    function resetRawStepPanels(message) {
+      const text = message || "No selected step.";
+      leftStepRaw.textContent = text;
+      rightStepRaw.textContent = text;
+      state.selectedRawStepPayload = null;
+    }
+
+    function renderRawStepPayload(payload) {
+      if (!payload) {
+        resetRawStepPanels("No selected step.");
+        return;
+      }
+      state.selectedRawStepPayload = payload;
+      leftStepRaw.textContent = payload.left_step ? pretty(payload.left_step) : "Step not present on left artifact.";
+      rightStepRaw.textContent = payload.right_step ? pretty(payload.right_step) : "Step not present on right artifact.";
+    }
+
+    async function loadRawStepPayload(stepIndex) {
+      if (!state.diff || !stepIndex) {
+        resetRawStepPanels("No selected step.");
+        return;
+      }
+      try {
+        const left = leftInput.value.trim();
+        const right = rightInput.value.trim();
+        if (!left || !right) {
+          resetRawStepPanels("Both artifact paths are required.");
+          return;
+        }
+        const query = new URLSearchParams({
+          left: left,
+          right: right,
+          index: String(stepIndex),
+        });
+        const res = await fetch("/api/step?" + query.toString());
+        const payload = await res.json();
+        if (!res.ok) {
+          resetRawStepPanels(payload.error || "Unable to load raw step payload.");
+          return;
+        }
+        renderRawStepPayload(payload);
+      } catch (_err) {
+        resetRawStepPanels("Unable to load raw step payload.");
+      }
+    }
+
     function renderSelectedChange(stepDiff) {
       const changes = stepDiff.changes || [];
       if (!changes.length) {
@@ -1639,10 +1764,12 @@ def _render_index_html() -> str:
         leftTree.innerHTML = "<div class='empty'>No selected step.</div>";
         rightTree.innerHTML = "<div class='empty'>No selected step.</div>";
         selectedPath.textContent = "No path selected.";
+        resetRawStepPanels("No selected step.");
         renderMetadata(null);
       } else {
         renderChangeList(step);
         renderMetadata(step);
+        loadRawStepPayload(step.index);
       }
 
       updateNavigationButtons();
@@ -1701,6 +1828,7 @@ def _render_index_html() -> str:
         if (state.visibleStepIndexes.length > 0) {
           selectStepByVisibleIndex(0);
         } else {
+          resetRawStepPanels("No selected step.");
           renderMetadata(null);
           updateNavigationButtons();
         }
@@ -1821,6 +1949,7 @@ def _render_index_html() -> str:
         leftTree.innerHTML = "<div class='empty'>No selected step.</div>";
         rightTree.innerHTML = "<div class='empty'>No selected step.</div>";
         selectedPath.textContent = "No path selected.";
+        resetRawStepPanels("No selected step.");
         renderMetadata(null);
         updateNavigationButtons();
         return;

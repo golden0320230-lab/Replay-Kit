@@ -46,6 +46,9 @@ def test_ui_server_smoke_and_core_render_path() -> None:
         assert "aria-label=\"Copy selected JSON path\"" in html
         assert "aria-label=\"Diff step list\"" in html
         assert "aria-label=\"Field-level change list\"" in html
+        assert "id=\"leftStepRaw\"" in html
+        assert "id=\"rightStepRaw\"" in html
+        assert "function loadRawStepPayload(stepIndex)" in html
         assert "function jumpToFirstDivergence()" in html
         assert "jumpButton.addEventListener(\"click\", jumpToFirstDivergence);" in html
 
@@ -70,6 +73,28 @@ def test_ui_server_empty_state_lists_no_files(tmp_path: Path) -> None:
 
         files_payload = _get_json(base_url + "/api/files")
         assert files_payload["files"] == []
+
+
+def test_ui_server_step_endpoint_returns_raw_payload_for_identical_steps() -> None:
+    config = UIServerConfig(host="127.0.0.1", port=0, base_dir=Path.cwd())
+
+    with start_ui_server(config) as (server, _thread):
+        host, port = server.server_address
+        base_url = f"http://{host}:{port}"
+
+        left = quote("examples/runs/m2_capture_boundaries.rpk")
+        right = quote("examples/runs/m2_capture_boundaries.rpk")
+        payload = _get_json(base_url + f"/api/step?left={left}&right={right}&index=1")
+        assert payload["index"] == 1
+        assert payload["left_step"] is not None
+        assert payload["right_step"] is not None
+        assert payload["left_step"]["type"] == "model.request"
+        assert payload["left_step"]["input"] is not None
+
+        payload = _get_json(base_url + f"/api/step?left={left}&right={right}&index=999")
+        assert payload["index"] == 999
+        assert payload["left_step"] is None
+        assert payload["right_step"] is None
 
 
 def test_ui_server_rename_artifact_success_and_validation_errors(tmp_path: Path) -> None:
