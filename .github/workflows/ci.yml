@@ -93,6 +93,16 @@ jobs:
           python -m replaypack assert runs/golden/passive-golden-replay-a.rpk --candidate runs/golden/passive-golden-replay-b.rpk --json > runs/golden/passive-golden-assert.json
           echo "Passive golden artifact replay gate completed (runs/golden/passive-golden-*)."
 
+      - name: Passive Live-Capture Fixture Parity Gate
+        run: |
+          python -c "from pathlib import Path; Path('runs/parity').mkdir(parents=True, exist_ok=True)"
+          python -m replaypack replay examples/runs/passive_live_capture_golden.rpk --out runs/parity/passive-live-replay-a.rpk --seed 31 --fixed-clock 2026-02-26T00:00:00Z
+          python -m replaypack replay examples/runs/passive_live_capture_golden.rpk --out runs/parity/passive-live-replay-b.rpk --seed 31 --fixed-clock 2026-02-26T00:00:00Z
+          python -m replaypack assert runs/parity/passive-live-replay-a.rpk --candidate runs/parity/passive-live-replay-b.rpk --json > runs/parity/passive-live-assert.json
+          python -m replaypack diff examples/runs/passive_live_capture_golden.rpk examples/runs/passive_live_capture_candidate_diverged.rpk --json > runs/parity/passive-live-diff.json
+          python -c "import json,sys; payload=json.load(open('runs/parity/passive-live-diff.json', encoding='utf-8')); fd=payload.get('first_divergence') or {}; expected_summary={'changed':1,'identical':6,'missing_left':0,'missing_right':0}; ok=(fd.get('index')==7 and fd.get('left_step_id')=='step-live-007' and fd.get('right_step_id')=='step-live-007' and payload.get('summary')==expected_summary); print('Passive live-capture divergence signature validated.' if ok else f'Unexpected passive live-capture diff payload: {payload}'); sys.exit(0 if ok else 1)"
+          echo "Passive live-capture parity gate completed (runs/parity/passive-live-*)."
+
       - name: Passive Listener Network-Off Replay Guard
         run: |
           python ci/passive_listener_network_off_replay_guard.py
