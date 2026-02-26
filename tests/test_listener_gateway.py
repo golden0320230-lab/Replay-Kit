@@ -367,8 +367,11 @@ def test_listener_gateway_fail_on_synthetic_blocks_responses_fallback(tmp_path: 
     error_steps = [step for step in run.steps if step.type == "error.event"]
     assert response_steps
     assert response_steps[-1].metadata.get("response_source") == "synthetic_blocked"
+    assert response_steps[-1].metadata.get("fallback_policy") == "live_only"
+    assert response_steps[-1].metadata.get("policy_outcome") == "live_only_blocked"
     assert "synthetic_fallback_blocked_by_policy" in response_steps[-1].output["error"]["message"]
-    assert any(step.metadata.get("category") == "synthetic_blocked" for step in error_steps)
+    blocked_step = next(step for step in error_steps if step.metadata.get("category") == "synthetic_blocked")
+    assert blocked_step.output["details"]["policy_outcome"] == "live_only_blocked"
 
 
 def test_listener_gateway_truncates_large_payload_strings_by_default(tmp_path: Path) -> None:
@@ -1068,6 +1071,148 @@ def test_listener_gateway_upstream_timeout_returns_502(tmp_path: Path) -> None:
     assert response_step.output["error"]["type"] == "gateway_error"
     assert "upstream_forward_failed" in response_step.output["error"]["message"]
     assert response_step.metadata.get("response_source") == "upstream_error"
+
+
+def test_listener_gateway_best_effort_policy_handles_upstream_timeout_with_diagnostics(
+    tmp_path: Path,
+) -> None:
+    with _local_upstream_server(
+        {
+            "/v1/chat/completions": (
+                200,
+                {
+                    "id": "chatcmpl-upstream-best-effort",
+                    "object": "chat.completion",
+                    "choices": [{"message": {"role": "assistant", "content": "should-timeout"}}],
+                },
+                0.3,
+            )
+        }
+    ) as (upstream_base_url, captured_requests):
+        runner = CliRunner()
+        state_file = tmp_path / "listener-best-effort-state.json"
+        out_path = tmp_path / "listener-best-effort-capture.rpk"
+        start_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "start",
+                "--state-file",
+                str(state_file),
+                "--out",
+                str(out_path),
+                "--fallback-policy",
+                "best_effort",
+                "--upstream-timeout-seconds",
+                "0.05",
+                "--upstream-retries",
+                "1",
+                "--upstream-retry-backoff-seconds",
+                "0.0",
+                "--json",
+            ],
+            env={"REPLAYKIT_OPENAI_UPSTREAM_URL": upstream_base_url},
+        )
+        assert start_result.exit_code == 0, start_result.output
+        started = json.loads(start_result.stdout.strip())
+        base_url = f"http://{started['host']}:{started['port']}"
+        try:
+            response = requests.post(
+                f"{base_url}/v1/chat/completions",
+                json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "timeout"}]},
+                timeout=2.0,
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["_replaykit"]["capture_status"] == "degraded"
+        finally:
+            stop_result = runner.invoke(
+                app,
+                [
+                    "listen",
+                    "stop",
+                    "--state-file",
+                    str(state_file),
+                    "--json",
+                ],
+            )
+            assert stop_result.exit_code == 0, stop_result.output
+
+    assert len(captured_requests) == 2
+    run = read_artifact(out_path)
+    response_step = [step for step in run.steps if step.type == "model.response"][-1]
+    assert response_step.metadata.get("fallback_policy") == "best_effort"
+    assert response_step.metadata.get("policy_outcome") == "best_effort_fallback"
+    assert response_step.metadata.get("response_source") == "best_effort_fallback"
+    assert response_step.metadata.get("upstream_attempts") == 2
+    error_step = next(
+        step
+        for step in run.steps
+        if step.type == "error.event" and step.metadata.get("category") == "best_effort_fallback"
+    )
+    assert error_step.output["details"]["policy_outcome"] == "best_effort_fallback"
+    assert "upstream_forward_failed" in error_step.output["details"]["reason"]
+
+
+def test_listener_gateway_upstream_retry_controls_attempt_count(tmp_path: Path) -> None:
+    routes = {
+        "/v1/chat/completions": (
+            500,
+            {"error": {"type": "upstream_error", "message": "retry me"}},
+            0.0,
+        ),
+    }
+    with _local_upstream_server(routes) as (upstream_base_url, captured_requests):
+        runner = CliRunner()
+        state_file = tmp_path / "listener-retry-state.json"
+        out_path = tmp_path / "listener-retry-capture.rpk"
+        start_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "start",
+                "--state-file",
+                str(state_file),
+                "--out",
+                str(out_path),
+                "--fallback-policy",
+                "live_only",
+                "--upstream-retries",
+                "2",
+                "--upstream-retry-backoff-seconds",
+                "0.0",
+                "--json",
+            ],
+            env={"REPLAYKIT_OPENAI_UPSTREAM_URL": upstream_base_url},
+        )
+        assert start_result.exit_code == 0, start_result.output
+        started = json.loads(start_result.stdout.strip())
+        base_url = f"http://{started['host']}:{started['port']}"
+        try:
+            response = requests.post(
+                f"{base_url}/v1/chat/completions",
+                json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "retry"}]},
+                timeout=2.0,
+            )
+            assert response.status_code == 500
+        finally:
+            stop_result = runner.invoke(
+                app,
+                [
+                    "listen",
+                    "stop",
+                    "--state-file",
+                    str(state_file),
+                    "--json",
+                ],
+            )
+            assert stop_result.exit_code == 0, stop_result.output
+
+    assert len(captured_requests) == 3
+    run = read_artifact(out_path)
+    response_step = [step for step in run.steps if step.type == "model.response"][-1]
+    assert response_step.metadata.get("upstream_attempts") == 3
+    assert response_step.metadata.get("upstream_retries") == 2
 
 
 def test_listener_gateway_stream_capture_records_ordered_events(tmp_path: Path) -> None:

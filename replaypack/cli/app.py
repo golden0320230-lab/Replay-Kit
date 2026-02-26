@@ -401,13 +401,32 @@ def listen_start(
         "--startup-timeout-seconds",
         help="Max time to wait for daemon startup.",
     ),
+    fallback_policy: str | None = typer.Option(
+        None,
+        "--fallback-policy",
+        help="Fallback policy: synthetic_allowed, best_effort, or live_only.",
+    ),
     allow_synthetic: bool = typer.Option(
         True,
         "--allow-synthetic/--fail-on-synthetic",
         help=(
-            "Allow synthetic listener responses when live upstream forwarding "
-            "is unavailable."
+            "Deprecated alias for --fallback-policy synthetic_allowed/live_only."
         ),
+    ),
+    upstream_timeout_seconds: float | None = typer.Option(
+        None,
+        "--upstream-timeout-seconds",
+        help="Timeout in seconds for each upstream provider request attempt.",
+    ),
+    upstream_retries: int | None = typer.Option(
+        None,
+        "--upstream-retries",
+        help="Retry count for upstream transport failures or HTTP 5xx responses.",
+    ),
+    upstream_retry_backoff_seconds: float | None = typer.Option(
+        None,
+        "--upstream-retry-backoff-seconds",
+        help="Linear backoff base seconds applied between upstream retries.",
     ),
     payload_string_limit: int = typer.Option(
         4096,
@@ -489,6 +508,28 @@ def listen_start(
                 _echo(message, err=True)
             raise typer.Exit(code=2)
 
+    resolved_fallback_policy = "synthetic_allowed" if allow_synthetic else "live_only"
+    if fallback_policy is not None:
+        normalized_policy = fallback_policy.strip().lower()
+        if normalized_policy not in {"synthetic_allowed", "best_effort", "live_only"}:
+            message = (
+                "listener start failed: unsupported --fallback-policy "
+                f"'{fallback_policy}'. Expected synthetic_allowed, best_effort, or live_only."
+            )
+            payload = {
+                "status": "error",
+                "exit_code": 2,
+                "message": message,
+                "artifact_path": None,
+                "state_file": str(state_path),
+            }
+            if json_output:
+                _echo_json(payload)
+            else:
+                _echo(message, err=True)
+            raise typer.Exit(code=2)
+        resolved_fallback_policy = normalized_policy
+
     session_id = f"listener-{int(time.time() * 1000)}"
     command = [
         sys.executable,
@@ -506,9 +547,17 @@ def listen_start(
         str(out),
         "--payload-string-limit",
         str(0 if full_payload_capture else payload_string_limit),
+        "--fallback-policy",
+        resolved_fallback_policy,
     ]
-    if not allow_synthetic:
-        command.append("--fail-on-synthetic")
+    if upstream_timeout_seconds is not None:
+        command.extend(["--upstream-timeout-seconds", str(upstream_timeout_seconds)])
+    if upstream_retries is not None:
+        command.extend(["--upstream-retries", str(upstream_retries)])
+    if upstream_retry_backoff_seconds is not None:
+        command.extend(
+            ["--upstream-retry-backoff-seconds", str(upstream_retry_backoff_seconds)]
+        )
 
     process = subprocess.Popen(
         command,
@@ -588,6 +637,12 @@ def listen_start(
         "artifact_out": started_state.get("artifact_path"),
         "allow_synthetic": bool(started_state.get("allow_synthetic", True)),
         "synthetic_policy": str(started_state.get("synthetic_policy", "allow")),
+        "fallback_policy": str(started_state.get("fallback_policy", "synthetic_allowed")),
+        "upstream_timeout_seconds": float(started_state.get("upstream_timeout_seconds", 5.0)),
+        "upstream_retries": int(started_state.get("upstream_retries", 0)),
+        "upstream_retry_backoff_seconds": float(
+            started_state.get("upstream_retry_backoff_seconds", 0.25)
+        ),
         "payload_string_limit": int(started_state.get("payload_string_limit", 4096)),
         "full_payload_capture": bool(started_state.get("full_payload_capture", False)),
         "stale_cleanup": stale_cleanup,
@@ -782,6 +837,12 @@ def listen_status(
         "artifact_out": running_state.get("artifact_path"),
         "allow_synthetic": bool(running_state.get("allow_synthetic", True)),
         "synthetic_policy": str(running_state.get("synthetic_policy", "allow")),
+        "fallback_policy": str(running_state.get("fallback_policy", "synthetic_allowed")),
+        "upstream_timeout_seconds": float(running_state.get("upstream_timeout_seconds", 5.0)),
+        "upstream_retries": int(running_state.get("upstream_retries", 0)),
+        "upstream_retry_backoff_seconds": float(
+            running_state.get("upstream_retry_backoff_seconds", 0.25)
+        ),
         "payload_string_limit": int(running_state.get("payload_string_limit", 4096)),
         "full_payload_capture": bool(running_state.get("full_payload_capture", False)),
         "healthy": healthy,
