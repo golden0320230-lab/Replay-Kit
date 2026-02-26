@@ -79,3 +79,22 @@ def test_default_redaction_masks_authorization_and_secret_payload_keys() -> None
     assert redacted["secret"] == "[REDACTED]"
     assert redacted["password"] == "[REDACTED]"
     assert redacted["safe"] == "visible"
+
+
+def test_default_redaction_masks_common_provider_token_formats() -> None:
+    jwt_like = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFkbWluIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    payload = {
+        "google_key": "AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "github_token": "gho_1234567890abcdefghijklmnopqrstuv",
+        "jwt": jwt_like,
+        "note": "safe",
+    }
+    redacted = redact_payload(payload)
+    assert redacted["google_key"] == "[REDACTED]"
+    assert redacted["github_token"] == "[REDACTED]"
+    assert redacted["jwt"] == "[REDACTED]"
+    assert redacted["note"] == "safe"
