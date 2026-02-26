@@ -157,6 +157,7 @@ def build_provider_response(
         status_code=200,
         payload=response,
         stream=request.stream,
+        path=request.path,
     )
     return 200, response, normalized
 
@@ -217,6 +218,7 @@ def normalize_provider_response(
     status_code: int,
     payload: dict[str, Any],
     stream: bool = False,
+    path: str | None = None,
 ) -> ProviderResponse:
     assembled_text = _extract_text(provider, payload)
     error_payload = None
@@ -224,7 +226,12 @@ def normalize_provider_response(
         error_payload = {"status_code": status_code, "payload": dict(payload)}
     stream_events: list[dict[str, Any]] = []
     if stream and status_code < 400 and assembled_text:
-        stream_events = _synthesize_stream_events(provider=provider, assembled_text=assembled_text)
+        stream_events = _synthesize_stream_events(
+            provider=provider,
+            payload=payload,
+            path=path,
+            assembled_text=assembled_text,
+        )
     return ProviderResponse(
         provider=provider,
         status_code=status_code,
@@ -339,16 +346,38 @@ def _extract_text(provider: str, payload: dict[str, Any]) -> str:
     return ""
 
 
-def _synthesize_stream_events(*, provider: str, assembled_text: str) -> list[dict[str, Any]]:
+def _synthesize_stream_events(
+    *,
+    provider: str,
+    payload: dict[str, Any],
+    path: str | None,
+    assembled_text: str,
+) -> list[dict[str, Any]]:
+    delta_event_type, completion_event_type = _stream_event_types(
+        provider=provider,
+        payload=payload,
+        path=path,
+    )
     events: list[dict[str, Any]] = []
-    for index, chunk in enumerate(_split_stream_chunks(assembled_text), start=1):
+    chunks = _split_stream_chunks(assembled_text)
+    for index, chunk in enumerate(chunks, start=1):
         events.append(
             {
                 "index": index,
                 "provider": provider,
+                "provider_event_type": delta_event_type,
                 "delta_text": chunk,
             }
         )
+    events.append(
+        {
+            "index": len(chunks) + 1,
+            "provider": provider,
+            "provider_event_type": completion_event_type,
+            "delta_text": "",
+            "terminal": True,
+        }
+    )
     return events
 
 
@@ -356,3 +385,22 @@ def _split_stream_chunks(text: str, chunk_size: int = 3) -> list[str]:
     if not text:
         return []
     return [text[idx : idx + chunk_size] for idx in range(0, len(text), chunk_size)]
+
+
+def _stream_event_types(
+    *,
+    provider: str,
+    payload: dict[str, Any],
+    path: str | None,
+) -> tuple[str, str]:
+    normalized_path = str(path or "").strip()
+    if provider == "openai":
+        object_type = str(payload.get("object") or "").strip().lower()
+        if normalized_path in {"/responses", "/v1/responses"} or object_type == "response":
+            return "response.output_text.delta", "response.completed"
+        return "chat.completion.chunk", "chat.completion.completed"
+    if provider == "anthropic":
+        return "content_block_delta", "message_stop"
+    if provider == "google":
+        return "content_part_delta", "generate_content.complete"
+    return "stream.delta", "stream.completed"

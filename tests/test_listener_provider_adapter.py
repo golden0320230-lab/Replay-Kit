@@ -162,3 +162,80 @@ def test_listener_provider_adapter_fingerprint_stability() -> None:
     )
 
     assert provider_request_fingerprint(left) == provider_request_fingerprint(right)
+
+
+def test_listener_provider_adapter_stream_event_fidelity_and_determinism() -> None:
+    openai_payload = {
+        "id": "resp-upstream-001",
+        "object": "response",
+        "status": "completed",
+        "model": "gpt-5.3-codex",
+        "output": [
+            {
+                "id": "msg-upstream-001",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello from responses"}],
+            }
+        ],
+        "output_text": "hello from responses",
+    }
+    first_openai = normalize_provider_response(
+        provider="openai",
+        status_code=200,
+        payload=openai_payload,
+        stream=True,
+        path="/responses",
+    )
+    second_openai = normalize_provider_response(
+        provider="openai",
+        status_code=200,
+        payload=openai_payload,
+        stream=True,
+        path="/responses",
+    )
+    assert first_openai.stream_events == second_openai.stream_events
+    assert first_openai.stream_events
+    openai_event_types = [event["provider_event_type"] for event in first_openai.stream_events]
+    assert all(event_type == "response.output_text.delta" for event_type in openai_event_types[:-1])
+    assert openai_event_types[-1] == "response.completed"
+    assert first_openai.stream_events[-1]["terminal"] is True
+    assert "".join(event["delta_text"] for event in first_openai.stream_events) == first_openai.assembled_text
+
+    anthropic = normalize_provider_response(
+        provider="anthropic",
+        status_code=200,
+        payload={
+            "type": "message",
+            "id": "msg-upstream-001",
+            "content": [{"type": "text", "text": "hello"}],
+        },
+        stream=True,
+        path="/v1/messages",
+    )
+    assert anthropic.stream_events
+    anthropic_event_types = [event["provider_event_type"] for event in anthropic.stream_events]
+    assert all(event_type == "content_block_delta" for event_type in anthropic_event_types[:-1])
+    assert anthropic_event_types[-1] == "message_stop"
+
+    google = normalize_provider_response(
+        provider="google",
+        status_code=200,
+        payload={
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [{"text": "hello"}],
+                    }
+                }
+            ]
+        },
+        stream=True,
+        path="/v1beta/models/gemini-1.5-flash:generateContent",
+    )
+    assert google.stream_events
+    google_event_types = [event["provider_event_type"] for event in google.stream_events]
+    assert all(event_type == "content_part_delta" for event_type in google_event_types[:-1])
+    assert google_event_types[-1] == "generate_content.complete"

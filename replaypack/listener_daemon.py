@@ -407,6 +407,7 @@ class _ListenerRunRecorder:
                             provider=provider,
                             status_code=status_code,
                             payload=response_payload,
+                            path=path,
                         )
                 else:
                     if self._allow_synthetic or not supports_upstream_forward:
@@ -609,6 +610,7 @@ class _ListenerRunRecorder:
         status_code: int,
     ) -> dict[str, Any]:
         events: list[dict[str, Any]] = []
+        event_types: list[str] = []
         for event in normalized_response.stream_events or []:
             if not isinstance(event, dict):
                 continue
@@ -616,18 +618,50 @@ class _ListenerRunRecorder:
             event_payload["request_id"] = request_id
             event_payload["correlation_id"] = correlation_id
             events.append(event_payload)
+            event_type = str(
+                event_payload.get("provider_event_type")
+                or event_payload.get("type")
+                or ""
+            ).strip()
+            if event_type:
+                event_types.append(event_type)
+
+        terminal_event_type = ""
+        for event in reversed(events):
+            if not bool(event.get("terminal")):
+                continue
+            event_type = str(
+                event.get("provider_event_type")
+                or event.get("type")
+                or ""
+            ).strip()
+            if event_type:
+                terminal_event_type = event_type
+            break
 
         stream_enabled = bool(normalized_response.stream)
-        stream_completed = bool(stream_enabled and status_code < 400)
+        stream_outcome = "completed"
+        if not stream_enabled:
+            stream_outcome = "not_streaming"
+        elif status_code >= 400:
+            stream_outcome = "errored"
+        elif terminal_event_type:
+            stream_outcome = "completed"
+        else:
+            stream_outcome = "interrupted"
+
+        stream_completed = bool(stream_outcome == "completed")
         completion_state = "completed" if stream_completed else "incomplete"
         if not stream_enabled:
             completion_state = "not_streaming"
 
         diagnostics: list[dict[str, Any]] = []
-        if stream_enabled and not stream_completed:
+        if stream_enabled and stream_outcome != "completed":
             diagnostics.append(
                 {
                     "kind": "stream_incomplete",
+                    "outcome": stream_outcome,
+                    "terminal_event_type": terminal_event_type or None,
                     "message": (
                         str((normalized_response.error or {}).get("message")).strip()
                         if isinstance(normalized_response.error, dict)
@@ -641,8 +675,11 @@ class _ListenerRunRecorder:
             "enabled": stream_enabled,
             "completed": stream_completed,
             "completion_state": completion_state,
+            "outcome": stream_outcome,
             "event_count": len(events),
             "events": redact_listener_value(events),
+            "event_types": redact_listener_value(event_types),
+            "terminal_event_type": redact_listener_value(terminal_event_type),
             "diagnostics": redact_listener_value(diagnostics),
         }
 

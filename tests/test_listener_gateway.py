@@ -1150,20 +1150,37 @@ def test_listener_gateway_stream_capture_records_ordered_events(tmp_path: Path) 
     run = read_artifact(out_path)
     response_steps = [step for step in run.steps if step.type == "model.response"]
     assert len(response_steps) == 4
+    expected_event_types_by_path = {
+        "/responses": ("response.output_text.delta", "response.completed"),
+        "/v1/chat/completions": ("chat.completion.chunk", "chat.completion.completed"),
+        "/v1/messages": ("content_block_delta", "message_stop"),
+        "/v1beta/models/gemini-1.5-flash:generateContent": (
+            "content_part_delta",
+            "generate_content.complete",
+        ),
+    }
 
     for step in response_steps:
+        path = str(step.metadata.get("path"))
+        delta_event_type, completion_event_type = expected_event_types_by_path[path]
         stream_payload = step.output["stream"]
         assert stream_payload["enabled"] is True
         assert stream_payload["completed"] is True
         assert stream_payload["completion_state"] == "completed"
+        assert stream_payload["outcome"] == "completed"
         assert stream_payload["event_count"] > 0
         assert stream_payload["diagnostics"] == []
+        assert stream_payload["terminal_event_type"] == completion_event_type
         events = stream_payload["events"]
         assert [event["index"] for event in events] == list(
             range(1, len(events) + 1)
         )
         assert all(event["request_id"] == step.metadata["request_id"] for event in events)
         assert all(event["correlation_id"] == step.metadata["correlation_id"] for event in events)
+        assert all(event["provider_event_type"] == delta_event_type for event in events[:-1])
+        assert events[-1]["provider_event_type"] == completion_event_type
+        assert events[-1]["terminal"] is True
+        assert stream_payload["event_types"] == [event["provider_event_type"] for event in events]
         assembled = "".join(event["delta_text"] for event in events)
         assert assembled == step.output["assembled_text"]
 
@@ -1222,10 +1239,14 @@ def test_listener_gateway_stream_failure_marks_incomplete_stream(tmp_path: Path)
     assert stream_payload["enabled"] is True
     assert stream_payload["completed"] is False
     assert stream_payload["completion_state"] == "incomplete"
+    assert stream_payload["outcome"] == "errored"
     assert stream_payload["event_count"] == 0
     assert stream_payload["events"] == []
+    assert stream_payload["event_types"] == []
+    assert stream_payload["terminal_event_type"] == ""
     assert stream_payload["diagnostics"]
     assert stream_payload["diagnostics"][0]["kind"] == "stream_incomplete"
+    assert stream_payload["diagnostics"][0]["outcome"] == "errored"
     assert response_step.output["error"]["type"] == "gateway_error"
 
 
@@ -1283,8 +1304,12 @@ def test_listener_gateway_responses_stream_failure_marks_incomplete_stream(tmp_p
     assert stream_payload["enabled"] is True
     assert stream_payload["completed"] is False
     assert stream_payload["completion_state"] == "incomplete"
+    assert stream_payload["outcome"] == "errored"
     assert stream_payload["event_count"] == 0
     assert stream_payload["events"] == []
+    assert stream_payload["event_types"] == []
+    assert stream_payload["terminal_event_type"] == ""
     assert stream_payload["diagnostics"]
     assert stream_payload["diagnostics"][0]["kind"] == "stream_incomplete"
+    assert stream_payload["diagnostics"][0]["outcome"] == "errored"
     assert response_step.output["error"]["type"] == "gateway_error"
