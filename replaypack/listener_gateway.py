@@ -34,14 +34,18 @@ class ProviderResponse:
 
 
 def detect_provider(path: str) -> str | None:
-    normalized = path.strip()
+    normalized = str(path or "").strip()
+    if not normalized:
+        return None
+    if normalized != "/":
+        normalized = normalized.rstrip("/")
     if normalized in {"/models", "/v1/models"}:
         return "openai"
     if normalized in {"/responses", "/v1/responses"}:
         return "openai"
-    if normalized == "/v1/chat/completions":
+    if normalized in {"/v1/chat/completions", "/chat/completions"}:
         return "openai"
-    if normalized == "/v1/messages":
+    if normalized in {"/v1/messages", "/messages"}:
         return "anthropic"
     if normalized.startswith("/v1beta/models/") and normalized.endswith(":generateContent"):
         return "google"

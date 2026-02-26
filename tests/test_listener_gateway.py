@@ -89,10 +89,138 @@ def test_listener_gateway_detect_provider_paths() -> None:
     assert detect_provider("/v1/models") == "openai"
     assert detect_provider("/responses") == "openai"
     assert detect_provider("/v1/responses") == "openai"
+    assert detect_provider("/responses/") == "openai"
     assert detect_provider("/v1/chat/completions") == "openai"
+    assert detect_provider("/chat/completions") == "openai"
     assert detect_provider("/v1/messages") == "anthropic"
+    assert detect_provider("/messages") == "anthropic"
     assert detect_provider("/v1beta/models/gemini-1.5-flash:generateContent") == "google"
     assert detect_provider("/v1/unknown") is None
+
+
+def test_listener_gateway_unsupported_route_diagnostics_include_remediation_hint(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-route-diagnostics-state.json"
+    out_path = tmp_path / "listener-route-diagnostics-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        models_post = requests.post(
+            f"{base_url}/models",
+            json={"model": "gpt-5.3-codex"},
+            timeout=2.0,
+        )
+        assert models_post.status_code == 405
+        models_payload = models_post.json()
+        assert models_payload["code"] == "method_not_allowed"
+        assert models_payload["supported_methods"] == ["GET"]
+        assert "listener health" in models_payload["hint"]
+
+        responses_get = requests.get(f"{base_url}/responses", timeout=2.0)
+        assert responses_get.status_code == 405
+        responses_payload = responses_get.json()
+        assert responses_payload["code"] == "method_not_allowed"
+        assert responses_payload["supported_methods"] == ["POST"]
+
+        unknown = requests.post(
+            f"{base_url}/v1/unknown",
+            json={},
+            timeout=2.0,
+        )
+        assert unknown.status_code == 404
+        unknown_payload = unknown.json()
+        assert unknown_payload["code"] == "unsupported_route"
+        assert "/responses" in unknown_payload["supported_paths"]
+        assert "listen env" in unknown_payload["hint"]
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+
+def test_listener_gateway_accepts_trailing_slash_and_short_route_aliases(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-route-alias-state.json"
+    out_path = tmp_path / "listener-route-alias-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        responses = requests.post(
+            f"{base_url}/responses/",
+            json={"model": "gpt-5.3-codex", "input": "hello"},
+            timeout=2.0,
+        )
+        assert responses.status_code == 200
+
+        chat = requests.post(
+            f"{base_url}/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+            timeout=2.0,
+        )
+        assert chat.status_code == 200
+
+        anthropic = requests.post(
+            f"{base_url}/messages/",
+            json={"model": "claude-3-5-sonnet", "messages": [{"role": "user", "content": "hi"}]},
+            timeout=2.0,
+        )
+        assert anthropic.status_code == 200
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    request_paths = [step.metadata.get("path") for step in run.steps if step.type == "model.request"]
+    assert request_paths == ["/responses", "/chat/completions", "/messages"]
 
 
 def test_listener_gateway_serves_openai_models_routes(tmp_path: Path) -> None:
