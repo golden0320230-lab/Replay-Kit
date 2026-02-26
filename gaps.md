@@ -741,3 +741,290 @@ Document transparent-mode operation and recovery.
 5. GAP-TM-05  
 6. GAP-TM-06  
 7. GAP-TM-07  
+
+---
+
+# Addendum: Production Readiness Gaps from Codex Passive Demo Artifact (2026-02-26)
+
+## Evidence Summary
+
+Artifact reviewed: `runs/manual/codex-passive-demo.rpk`
+
+Observed:
+- Exactly 2 steps: `model.request`, `model.response`.
+- No `tool.request`/`tool.response` steps.
+- `response_source` is synthetic.
+- Captured payload contains large instruction/context body.
+- Authorization is redacted, but broader body/query/log redaction guarantees still need explicit coverage.
+
+## Objective
+
+Promote passive listener behavior from demo-safe synthetic capture to production-safe, real-traffic capture with deterministic replay guarantees and security controls.
+
+---
+
+## Issue GAP-PR-01: Set Production Capture Policy (Live Pass-Through Default)
+
+**Type:** backend/policy  
+**Priority:** P0  
+**Depends on:** GAP-PM-01, GAP-PM-03
+
+### Objective
+Define and enforce a production policy where live pass-through is the default capture mode, and synthetic mode is explicit opt-in.
+
+### Scope
+- Add explicit listener mode policy flags (`live`, `synthetic`).
+- Default to live pass-through in production mode.
+- Add hard warnings in CLI/UI/JSON when synthetic mode is active.
+
+### Acceptance Criteria
+- Production listener start defaults to live pass-through.
+- Synthetic mode requires explicit opt-in.
+- Artifact metadata always records mode and policy source.
+
+### Test Evidence
+- CLI policy tests for default mode and explicit synthetic opt-in.
+- Integration tests asserting metadata mode fields.
+
+---
+
+## Issue GAP-PR-02: Add Synthetic-Mode Guardrails and Fail-Closed Options
+
+**Type:** backend/reliability  
+**Priority:** P0  
+**Depends on:** GAP-PR-01
+
+### Objective
+Prevent accidental use of synthetic responses in production runs.
+
+### Scope
+- Add `--fail-on-synthetic`/config equivalent for strict environments.
+- Emit `error.event` when strict mode blocks synthetic fallback.
+- Add machine-readable status fields in listener outputs.
+
+### Acceptance Criteria
+- Strict mode blocks synthetic fallback and exits non-zero.
+- Non-strict mode still records explicit synthetic marker.
+- Operator can detect synthetic usage from JSON output alone.
+
+### Test Evidence
+- Listener strict/non-strict fallback tests.
+- Regression tests verifying exit codes and `error.event` behavior.
+
+---
+
+## Issue GAP-PR-03: Capture Codex Tool/Action Semantics as `tool.*` Steps
+
+**Type:** backend/adapter  
+**Priority:** P0  
+**Depends on:** GAP-CODEX-02
+
+### Objective
+Convert provider/agent payload structures that represent tool usage into canonical `tool.request` and `tool.response` steps.
+
+### Scope
+- Parse response payload tool-call/tool-result structures.
+- Map to deterministic ReplayKit tool steps with correlation IDs.
+- Keep `model.*` steps for full request/response trace.
+
+### Acceptance Criteria
+- Tool-bearing fixtures emit both `model.*` and `tool.*` steps.
+- Step ordering is deterministic and replay-stable.
+- UI diff shows tool steps for Codex-compatible traffic.
+
+### Test Evidence
+- Adapter fixture tests for tool-call and tool-output mapping.
+- End-to-end passive capture test verifying non-empty tool steps.
+
+---
+
+## Issue GAP-PR-04: Enforce Capture Payload Minimization and Allowlist Controls
+
+**Type:** security/privacy  
+**Priority:** P1  
+**Depends on:** GAP-PR-01
+
+### Objective
+Reduce captured request surface to debugging-essential fields by default, with explicit allowlist expansion controls.
+
+### Scope
+- Define per-provider default capture allowlist.
+- Truncate/drop non-essential high-volume fields.
+- Add config for opt-in full body capture with warning banner.
+
+### Acceptance Criteria
+- Default artifacts exclude non-essential large instruction blobs.
+- Required replay/debug fields remain present.
+- Full body capture requires explicit opt-in.
+
+### Test Evidence
+- Snapshot tests for minimized payload shape.
+- Replay parity tests proving minimized artifacts still replay.
+
+---
+
+## Issue GAP-PR-05: Harden Redaction Across Headers, Body, Query, and Logs
+
+**Type:** security  
+**Priority:** P0  
+**Depends on:** GAP-PM-07, GAP-PR-04
+
+### Objective
+Guarantee no secrets/tokens/PII leak into artifacts and listener logs.
+
+### Scope
+- Deep redaction for nested request/response fields.
+- Query parameter scrubbing.
+- Structured log redaction aligned with artifact redaction policies.
+
+### Acceptance Criteria
+- No raw secret patterns in artifacts or logs.
+- Redaction behavior is consistent across streaming and non-streaming flows.
+- CI fails on known secret leakage patterns.
+
+### Test Evidence
+- Positive/negative redaction tests.
+- Artifact/log scanner test suite in default CI run.
+
+---
+
+## Issue GAP-PR-06: Improve Streaming Fidelity and Completion Semantics
+
+**Type:** backend/streaming  
+**Priority:** P0  
+**Depends on:** GAP-CODEX-03
+
+### Objective
+Capture provider-accurate streaming semantics while preserving deterministic assembled output.
+
+### Scope
+- Preserve provider event types and ordering.
+- Persist stream completion/error states with diagnostics.
+- Validate deterministic assembly from streamed deltas.
+
+### Acceptance Criteria
+- Stream metadata distinguishes clean completion vs interrupted streams.
+- Assembled output is deterministic from identical traces.
+- Provider-specific event fidelity is retained for debugging.
+
+### Test Evidence
+- Streaming integration tests with clean and interrupted flows.
+- Canonicalization tests for deterministic assembled text.
+
+---
+
+## Issue GAP-PR-07: Strengthen Upstream Failure Isolation and Recovery
+
+**Type:** reliability  
+**Priority:** P0  
+**Depends on:** GAP-PM-08, GAP-PR-01
+
+### Objective
+Ensure listener errors do not silently degrade production behavior and provide explicit operator controls.
+
+### Scope
+- Policy-driven retry/backoff and timeout controls.
+- Explicit fallback policies (`live_only`, `best_effort`, `synthetic_allowed`).
+- Actionable diagnostics for upstream failures.
+
+### Acceptance Criteria
+- Listener behavior is policy-consistent under upstream faults.
+- `error.event` includes actionable diagnostics and policy outcome.
+- No hidden fallback to synthetic in strict production mode.
+
+### Test Evidence
+- Fault-injection tests for timeout, 5xx, malformed payload, and disconnects.
+- Policy matrix tests for fallback behavior.
+
+---
+
+## Issue GAP-PR-08: Expand Provider/Codex Route Compatibility Coverage
+
+**Type:** backend/integration  
+**Priority:** P0  
+**Depends on:** GAP-CODEX-01, GAP-TM-03
+
+### Objective
+Guarantee compatibility for all core routes used during real Codex/OpenAI startup and execution.
+
+### Scope
+- Validate supported path/method matrix:
+  - `/models`
+  - `/responses`
+  - `/v1/responses`
+  - other currently implemented OpenAI-compatible paths in contract
+- Add explicit unsupported-route diagnostics.
+
+### Acceptance Criteria
+- Supported routes no longer return unexpected `404 unsupported path`.
+- Unsupported routes return contract-defined errors with remediation hint.
+- Route compatibility matrix is documented and tested.
+
+### Test Evidence
+- Route matrix integration tests.
+- Regression tests for previously failing Codex paths.
+
+---
+
+## Issue GAP-PR-09: Add Replay Parity Gates for Live-Capture Artifacts
+
+**Type:** qa/replay  
+**Priority:** P0  
+**Depends on:** GAP-PR-03, GAP-PR-06, GAP-PR-07
+
+### Objective
+Prevent production regressions by gating on replay determinism and first-divergence stability for live-capture flows.
+
+### Scope
+- Add golden live-capture fixtures (sanitized) for passive mode.
+- Enforce replay parity checks in CI.
+- Validate first-divergence output stability.
+
+### Acceptance Criteria
+- Repeated stub replays from same artifact are canonically stable.
+- First-divergence output remains deterministic for fixed fixtures.
+- CI blocks merges on parity regressions.
+
+### Test Evidence
+- Replay parity test suite with fixture hashes.
+- CI job artifacts demonstrating deterministic outputs.
+
+---
+
+## Issue GAP-PR-10: Add Operational Controls (Health, Rotation, Retention)
+
+**Type:** ops/devx  
+**Priority:** P1  
+**Depends on:** GAP-PM-02, GAP-PR-09
+
+### Objective
+Ship operator-grade controls for long-running passive capture sessions.
+
+### Scope
+- Listener health endpoints/status metrics.
+- Artifact rotation strategy (size/time-based).
+- Retention/cleanup commands and policies.
+
+### Acceptance Criteria
+- Operators can run passive listener long-term without manual cleanup.
+- Health/status outputs expose capture errors and degraded state clearly.
+- Rotation/retention policies prevent unbounded artifact growth.
+
+### Test Evidence
+- Lifecycle tests for rotation and retention.
+- Status/metrics tests for healthy/degraded states.
+
+---
+
+## Suggested GitHub Issue Creation Order (Production Readiness Addendum)
+
+1. GAP-PR-01  
+2. GAP-PR-02  
+3. GAP-PR-03  
+4. GAP-PR-04  
+5. GAP-PR-05  
+6. GAP-PR-06  
+7. GAP-PR-07  
+8. GAP-PR-08  
+9. GAP-PR-09  
+10. GAP-PR-10  
