@@ -442,6 +442,24 @@ def listen_start(
         "--full-payload-capture",
         help="Disable payload string truncation and capture full request payload strings.",
     ),
+    rotation_max_steps: int | None = typer.Option(
+        None,
+        "--rotation-max-steps",
+        min=0,
+        help=(
+            "Rotate listener artifact snapshots after this many recorded steps "
+            "(0 disables rotation)."
+        ),
+    ),
+    retention_max_artifacts: int | None = typer.Option(
+        None,
+        "--retention-max-artifacts",
+        min=0,
+        help=(
+            "Retain at most this many rotated artifact snapshots "
+            "(0 keeps all rotated snapshots)."
+        ),
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -558,6 +576,10 @@ def listen_start(
         command.extend(
             ["--upstream-retry-backoff-seconds", str(upstream_retry_backoff_seconds)]
         )
+    if rotation_max_steps is not None:
+        command.extend(["--rotation-max-steps", str(rotation_max_steps)])
+    if retention_max_artifacts is not None:
+        command.extend(["--retention-max-artifacts", str(retention_max_artifacts)])
 
     process = subprocess.Popen(
         command,
@@ -645,6 +667,8 @@ def listen_start(
         ),
         "payload_string_limit": int(started_state.get("payload_string_limit", 4096)),
         "full_payload_capture": bool(started_state.get("full_payload_capture", False)),
+        "rotation_max_steps": int(started_state.get("rotation_max_steps", 0)),
+        "retention_max_artifacts": int(started_state.get("retention_max_artifacts", 0)),
         "stale_cleanup": stale_cleanup,
     }
     if json_output:
@@ -845,6 +869,8 @@ def listen_status(
         ),
         "payload_string_limit": int(running_state.get("payload_string_limit", 4096)),
         "full_payload_capture": bool(running_state.get("full_payload_capture", False)),
+        "rotation_max_steps": int(running_state.get("rotation_max_steps", 0)),
+        "retention_max_artifacts": int(running_state.get("retention_max_artifacts", 0)),
         "healthy": healthy,
         "health": health,
         "stale_cleanup": stale_cleanup,
@@ -965,6 +991,95 @@ def listen_env(
         ]
 
     _echo("\n".join(lines), force=True)
+
+
+@listen_app.command("cleanup")
+def listen_cleanup(
+    artifact_dir: Path = typer.Option(
+        Path("runs/listener"),
+        "--artifact-dir",
+        help="Directory containing listener artifacts to prune.",
+    ),
+    glob_pattern: str = typer.Option(
+        "*.rpk",
+        "--glob",
+        help="Glob pattern for cleanup candidates within --artifact-dir.",
+    ),
+    keep: int = typer.Option(
+        20,
+        "--keep",
+        min=0,
+        help="Number of most recent matching artifacts to keep.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be deleted without removing files.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable cleanup summary.",
+    ),
+) -> None:
+    """Prune old passive-listener artifacts by retention count."""
+    target_dir = Path(artifact_dir)
+    candidates: list[Path] = []
+    if target_dir.exists():
+        candidates = [path for path in target_dir.glob(glob_pattern) if path.is_file()]
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+
+    kept = candidates[:keep] if keep > 0 else []
+    prunable = candidates[keep:] if keep < len(candidates) else []
+
+    removed: list[str] = []
+    errors: list[dict[str, str]] = []
+    for path in prunable:
+        if dry_run:
+            removed.append(str(path))
+            continue
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except OSError as error:
+            errors.append({"path": str(path), "error": str(error)})
+
+    payload = {
+        "status": "ok" if not errors else "error",
+        "exit_code": 0 if not errors else 1,
+        "message": (
+            "listener cleanup completed"
+            if not errors
+            else "listener cleanup completed with deletion errors"
+        ),
+        "artifact_path": None,
+        "artifact_dir": str(target_dir),
+        "glob": glob_pattern,
+        "keep": keep,
+        "dry_run": dry_run,
+        "scanned_count": len(candidates),
+        "kept_count": len(kept),
+        "removed_count": len(removed),
+        "removed_files": removed,
+        "error_count": len(errors),
+        "errors": errors,
+    }
+
+    if json_output:
+        _echo_json(payload)
+    else:
+        _echo(
+            "listener cleanup: "
+            f"scanned={payload['scanned_count']} "
+            f"removed={payload['removed_count']} "
+            f"kept={payload['kept_count']}"
+        )
+        if errors:
+            for error in errors:
+                _echo(f"cleanup error: {error['path']}: {error['error']}", err=True)
+
+    if errors:
+        raise typer.Exit(code=1)
 
 
 def _transparent_platform_name() -> str:

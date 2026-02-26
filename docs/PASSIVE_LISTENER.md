@@ -61,6 +61,8 @@ Start listener daemon:
 
 ```bash
 replaykit listen start --json
+# optional long-running controls:
+replaykit listen start --json --rotation-max-steps 5000 --retention-max-artifacts 20
 ```
 
 Stop listener daemon:
@@ -81,6 +83,12 @@ Print shell exports for routing app traffic to listener:
 replaykit listen env --shell bash
 replaykit listen env --shell powershell
 replaykit listen env --json
+```
+
+Prune old artifacts manually (count-based retention):
+
+```bash
+replaykit listen cleanup --artifact-dir runs/listener --glob "*.rpk" --keep 20 --json
 ```
 
 Lifecycle behavior:
@@ -225,12 +233,20 @@ If any checklist item fails, use the recovery playbook below before re-running.
 - `capture_errors`
 - `dropped_events`
 - `degraded_responses`
+- `rotation_max_steps`
+- `retention_max_artifacts`
+- `rotated_artifacts`
+- `retained_rotation_artifacts`
+- `retention_pruned_artifacts`
+- `rotation_last_at`
 
 Best-effort behavior is enabled by default:
 
 - If capture internals fail, listener returns degraded fallback provider responses and records diagnostics as `error.event`.
 - Malformed agent frames are dropped with diagnostics (`parse_error` in response + `error.event`) and metrics increments.
 - Passive `.rpk` writes are atomic, so abrupt listener termination keeps the last committed artifact valid.
+- When `--rotation-max-steps` is configured, listener snapshots rotated segments as
+  `<artifact>.part-<index>.rpk` and enforces `--retention-max-artifacts` automatically.
 
 ## Security
 

@@ -51,6 +51,7 @@ As of **February 23, 2026**, ReplayKit currently provides:
 - Built-in `agent capture` adapters: `codex` and `claude-code` (fixture-runner backed for deterministic CI and local debugging).
 - Passive listener/interceptor mode via `listen start|stop|status|env` for out-of-process provider/agent capture.
 - Passive listener OpenAI Responses normalization that derives `tool.request/tool.response` steps when tool-call payloads are present.
+- Passive listener operational controls via `listen cleanup` and configurable artifact rotation/retention (`--rotation-max-steps`, `--retention-max-artifacts`).
 - macOS transparent listener lifecycle via `listen transparent doctor|start|status|stop` with rollback journaling and stale-session cleanup.
 - Provider adapter contract (`docs/providers.md`) for custom model providers without modifying core capture internals.
 - Lifecycle plugin hooks via versioned plugin config (`docs/plugins.md`) for capture/replay/diff events.
@@ -94,6 +95,9 @@ replaykit listen start --state-file runs/passive/state.json --out runs/passive/c
 replaykit listen env --state-file runs/passive/state.json --shell bash
 replaykit listen status --state-file runs/passive/state.json --json
 replaykit listen stop --state-file runs/passive/state.json --json
+# optional long-running controls
+replaykit listen start --state-file runs/passive/state.json --out runs/passive/capture.rpk --rotation-max-steps 5000 --retention-max-artifacts 20 --json
+replaykit listen cleanup --artifact-dir runs/passive --glob "*.rpk" --keep 20 --json
 ```
 
 Routing exports from `listen env` include provider base URLs and agent event endpoints. No API keys are emitted.
