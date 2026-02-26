@@ -371,6 +371,109 @@ def test_listener_gateway_fail_on_synthetic_blocks_responses_fallback(tmp_path: 
     assert any(step.metadata.get("category") == "synthetic_blocked" for step in error_steps)
 
 
+def test_listener_gateway_truncates_large_payload_strings_by_default(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+    large_input = "x" * 6000
+
+    try:
+        response = requests.post(
+            f"{base_url}/responses",
+            json={"model": "gpt-5.3-codex", "input": large_input},
+            timeout=2.0,
+        )
+        assert response.status_code == 200
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    request_step = next(step for step in run.steps if step.type == "model.request")
+    captured_input = request_step.input["payload"]["input"]
+    assert isinstance(captured_input, str)
+    assert len(captured_input) < len(large_input)
+    assert "[TRUNCATED " in captured_input
+    assert request_step.metadata["payload_truncated_fields"] >= 1
+    assert request_step.metadata["payload_string_limit"] == 4096
+
+
+def test_listener_gateway_full_payload_capture_preserves_large_payload_strings(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--full-payload-capture",
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+    large_input = "y" * 6000
+
+    try:
+        response = requests.post(
+            f"{base_url}/responses",
+            json={"model": "gpt-5.3-codex", "input": large_input},
+            timeout=2.0,
+        )
+        assert response.status_code == 200
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    request_step = next(step for step in run.steps if step.type == "model.request")
+    captured_input = request_step.input["payload"]["input"]
+    assert captured_input == large_input
+    assert request_step.metadata["payload_truncated_fields"] == 0
+    assert request_step.metadata["payload_string_limit"] == 0
+
+
 def test_listener_gateway_decodes_zstd_encoded_openai_responses_payload(tmp_path: Path) -> None:
     runner = CliRunner()
     state_file = tmp_path / "listener-state.json"
