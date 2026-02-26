@@ -401,6 +401,14 @@ def listen_start(
         "--startup-timeout-seconds",
         help="Max time to wait for daemon startup.",
     ),
+    allow_synthetic: bool = typer.Option(
+        True,
+        "--allow-synthetic/--fail-on-synthetic",
+        help=(
+            "Allow synthetic listener responses when live upstream forwarding "
+            "is unavailable."
+        ),
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -483,6 +491,8 @@ def listen_start(
         "--out",
         str(out),
     ]
+    if not allow_synthetic:
+        command.append("--fail-on-synthetic")
 
     process = subprocess.Popen(
         command,
@@ -560,6 +570,8 @@ def listen_start(
         "host": started_state.get("host"),
         "port": started_state.get("port"),
         "artifact_out": started_state.get("artifact_path"),
+        "allow_synthetic": bool(started_state.get("allow_synthetic", True)),
+        "synthetic_policy": str(started_state.get("synthetic_policy", "allow")),
         "stale_cleanup": stale_cleanup,
     }
     if json_output:
@@ -750,6 +762,8 @@ def listen_status(
         "host": host,
         "port": port,
         "artifact_out": running_state.get("artifact_path"),
+        "allow_synthetic": bool(running_state.get("allow_synthetic", True)),
+        "synthetic_policy": str(running_state.get("synthetic_policy", "allow")),
         "healthy": healthy,
         "health": health,
         "stale_cleanup": stale_cleanup,

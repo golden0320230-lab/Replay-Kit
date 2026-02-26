@@ -315,6 +315,62 @@ def test_listener_gateway_captures_openai_responses_routes(tmp_path: Path) -> No
     ]
 
 
+def test_listener_gateway_fail_on_synthetic_blocks_responses_fallback(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start_result = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--fail-on-synthetic",
+            "--json",
+        ],
+    )
+    assert start_result.exit_code == 0, start_result.output
+    started = json.loads(start_result.stdout.strip())
+    assert started["allow_synthetic"] is False
+    assert started["synthetic_policy"] == "fail_closed"
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        response = requests.post(
+            f"{base_url}/responses",
+            json={"model": "gpt-5.3-codex", "input": "say hello"},
+            timeout=2.0,
+        )
+        assert response.status_code == 502
+        payload = response.json()
+        assert "error" in payload
+        assert "synthetic_fallback_blocked_by_policy" in payload["error"]["message"]
+    finally:
+        stop_result = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop_result.exit_code == 0, stop_result.output
+
+    run = read_artifact(out_path)
+    response_steps = [step for step in run.steps if step.type == "model.response"]
+    error_steps = [step for step in run.steps if step.type == "error.event"]
+    assert response_steps
+    assert response_steps[-1].metadata.get("response_source") == "synthetic_blocked"
+    assert "synthetic_fallback_blocked_by_policy" in response_steps[-1].output["error"]["message"]
+    assert any(step.metadata.get("category") == "synthetic_blocked" for step in error_steps)
+
+
 def test_listener_gateway_decodes_zstd_encoded_openai_responses_payload(tmp_path: Path) -> None:
     runner = CliRunner()
     state_file = tmp_path / "listener-state.json"

@@ -233,9 +233,11 @@ class _ListenerRunRecorder:
         out_path: Path,
         host: str,
         port: int,
+        allow_synthetic: bool,
     ) -> None:
         self._lock = threading.Lock()
         self._out_path = out_path
+        self._allow_synthetic = allow_synthetic
         self._step_sequence = 0
         self._request_sequence = 0
         self._agent_event_sequence = 0
@@ -295,12 +297,25 @@ class _ListenerRunRecorder:
             correlation_id = provider_request_fingerprint(request)
 
             response_source = "synthetic"
+            synthetic_block_reason: str | None = None
             if fail_reason:
-                status_code, response_payload, normalized_response = build_provider_response(
-                    request=request,
-                    sequence=self._request_sequence,
-                    fail_reason=fail_reason,
-                )
+                if self._allow_synthetic:
+                    status_code, response_payload, normalized_response = build_provider_response(
+                        request=request,
+                        sequence=self._request_sequence,
+                        fail_reason=fail_reason,
+                    )
+                else:
+                    response_source = "synthetic_blocked"
+                    synthetic_block_reason = str(fail_reason)
+                    status_code, response_payload, normalized_response = build_provider_response(
+                        request=request,
+                        sequence=self._request_sequence,
+                        fail_reason=(
+                            "synthetic_fallback_blocked_by_policy: "
+                            f"{synthetic_block_reason}"
+                        ),
+                    )
             else:
                 upstream_base_url = _resolve_provider_upstream_base_url(provider)
                 supports_upstream_forward = path not in {"/models", "/v1/models"}
@@ -318,14 +333,31 @@ class _ListenerRunRecorder:
                         timeout_seconds=_resolve_upstream_timeout_seconds(),
                     )
                     if upstream_error:
-                        response_source = "upstream_error"
-                        status_code, response_payload, normalized_response = (
-                            build_provider_response(
-                                request=request,
-                                sequence=self._request_sequence,
-                                fail_reason=f"upstream_forward_failed: {upstream_error}",
+                        if self._allow_synthetic:
+                            response_source = "upstream_error"
+                            status_code, response_payload, normalized_response = (
+                                build_provider_response(
+                                    request=request,
+                                    sequence=self._request_sequence,
+                                    fail_reason=f"upstream_forward_failed: {upstream_error}",
+                                )
                             )
-                        )
+                        else:
+                            response_source = "synthetic_blocked"
+                            synthetic_block_reason = (
+                                "upstream_forward_failed: "
+                                f"{upstream_error}"
+                            )
+                            status_code, response_payload, normalized_response = (
+                                build_provider_response(
+                                    request=request,
+                                    sequence=self._request_sequence,
+                                    fail_reason=(
+                                        "synthetic_fallback_blocked_by_policy: "
+                                        f"{synthetic_block_reason}"
+                                    ),
+                                )
+                            )
                     else:
                         normalized_response = normalize_provider_response(
                             provider=provider,
@@ -333,11 +365,23 @@ class _ListenerRunRecorder:
                             payload=response_payload,
                         )
                 else:
-                    status_code, response_payload, normalized_response = build_provider_response(
-                        request=request,
-                        sequence=self._request_sequence,
-                        fail_reason=None,
-                    )
+                    if self._allow_synthetic or not supports_upstream_forward:
+                        status_code, response_payload, normalized_response = build_provider_response(
+                            request=request,
+                            sequence=self._request_sequence,
+                            fail_reason=None,
+                        )
+                    else:
+                        response_source = "synthetic_blocked"
+                        synthetic_block_reason = "no_upstream_configured"
+                        status_code, response_payload, normalized_response = build_provider_response(
+                            request=request,
+                            sequence=self._request_sequence,
+                            fail_reason=(
+                                "synthetic_fallback_blocked_by_policy: "
+                                f"{synthetic_block_reason}"
+                            ),
+                        )
 
             self._run.steps.append(
                 Step(
@@ -401,6 +445,43 @@ class _ListenerRunRecorder:
                             timestamp=_utc_now(),
                         )
                     )
+            if synthetic_block_reason is not None:
+                self._run.steps.append(
+                    Step(
+                        id=self._next_step_id(),
+                        type="error.event",
+                        input=redact_listener_value(
+                            {
+                                "source": "listener",
+                                "category": "synthetic_blocked",
+                                "request_id": request.request_id,
+                            }
+                        ),
+                        output=redact_listener_value(
+                            {
+                                "message": "synthetic fallback blocked by listener policy",
+                                "details": {
+                                    "provider": provider,
+                                    "path": path,
+                                    "request_id": request.request_id,
+                                    "reason": synthetic_block_reason,
+                                },
+                            }
+                        ),
+                        metadata=redact_listener_value(
+                            {
+                                "source": "listener",
+                                "category": "synthetic_blocked",
+                                "provider": provider,
+                                "path": path,
+                                "request_id": request.request_id,
+                                "correlation_id": correlation_id,
+                                "capture_mode": "passive",
+                            }
+                        ),
+                        timestamp=_utc_now(),
+                    )
+                )
             self._run.steps.append(
                 Step(
                     id=self._next_step_id(),
@@ -1064,6 +1145,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path("runs/listener/listener-capture.rpk"),
         type=Path,
     )
+    parser.add_argument(
+        "--fail-on-synthetic",
+        action="store_true",
+        help="Block synthetic fallback responses when live upstream forwarding is unavailable.",
+    )
     return parser
 
 
@@ -1127,6 +1213,7 @@ def _runtime_payload(
     host: str,
     port: int,
     out_path: Path,
+    allow_synthetic: bool,
 ) -> dict[str, Any]:
     return {
         "status": "running",
@@ -1135,6 +1222,8 @@ def _runtime_payload(
         "host": host,
         "port": port,
         "artifact_path": str(out_path),
+        "allow_synthetic": allow_synthetic,
+        "synthetic_policy": "allow" if allow_synthetic else "fail_closed",
         "started_at": _utc_now(),
         "process": {
             "pid": os.getpid(),
@@ -1167,6 +1256,7 @@ def main(argv: list[str] | None = None) -> int:
         out_path=args.out,
         host=host,
         port=port,
+        allow_synthetic=not bool(args.fail_on_synthetic),
     )
     write_listener_state(
         args.state_file,
@@ -1175,6 +1265,7 @@ def main(argv: list[str] | None = None) -> int:
             host=host,
             port=port,
             out_path=args.out,
+            allow_synthetic=not bool(args.fail_on_synthetic),
         ),
     )
 
