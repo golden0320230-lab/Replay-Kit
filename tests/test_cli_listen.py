@@ -267,6 +267,67 @@ def test_cli_listen_start_with_fail_on_synthetic_exposes_policy(tmp_path: Path) 
     assert stop.exit_code == 0, stop.output
 
 
+def test_cli_listen_start_with_best_effort_policy_exposes_runtime_controls(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+
+    start = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--fallback-policy",
+            "best_effort",
+            "--upstream-timeout-seconds",
+            "1.5",
+            "--upstream-retries",
+            "2",
+            "--upstream-retry-backoff-seconds",
+            "0.0",
+            "--json",
+        ],
+    )
+    assert start.exit_code == 0, start.output
+    started = json.loads(start.stdout.strip())
+    assert started["fallback_policy"] == "best_effort"
+    assert started["allow_synthetic"] is False
+    assert started["synthetic_policy"] == "fail_closed"
+    assert started["upstream_timeout_seconds"] == 1.5
+    assert started["upstream_retries"] == 2
+    assert started["upstream_retry_backoff_seconds"] == 0.0
+
+    status = runner.invoke(
+        app,
+        [
+            "listen",
+            "status",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert status.exit_code == 0, status.output
+    running_payload = json.loads(status.stdout.strip())
+    assert running_payload["fallback_policy"] == "best_effort"
+    assert running_payload["upstream_timeout_seconds"] == 1.5
+    assert running_payload["upstream_retries"] == 2
+    assert running_payload["upstream_retry_backoff_seconds"] == 0.0
+
+    stop = runner.invoke(
+        app,
+        [
+            "listen",
+            "stop",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert stop.exit_code == 0, stop.output
+
+
 def test_cli_listen_start_with_full_payload_capture_exposes_policy(tmp_path: Path) -> None:
     runner = CliRunner()
     state_file = tmp_path / "listener-state.json"

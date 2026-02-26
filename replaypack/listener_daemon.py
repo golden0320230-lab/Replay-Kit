@@ -56,9 +56,21 @@ _UPSTREAM_ENV_BY_PROVIDER = {
 }
 _UPSTREAM_ENV_FALLBACK = "REPLAYKIT_PROVIDER_UPSTREAM_URL"
 _UPSTREAM_TIMEOUT_ENV = "REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS"
+_UPSTREAM_RETRIES_ENV = "REPLAYKIT_LISTENER_UPSTREAM_RETRIES"
+_UPSTREAM_RETRY_BACKOFF_ENV = "REPLAYKIT_LISTENER_UPSTREAM_RETRY_BACKOFF_SECONDS"
 _UPSTREAM_DEFAULT_TIMEOUT_SECONDS = 5.0
+_UPSTREAM_DEFAULT_RETRIES = 0
+_UPSTREAM_DEFAULT_RETRY_BACKOFF_SECONDS = 0.25
 _PAYLOAD_STRING_LIMIT_ENV = "REPLAYKIT_LISTENER_PAYLOAD_STRING_LIMIT"
 _PAYLOAD_STRING_DEFAULT_LIMIT = 4096
+_FALLBACK_POLICY_SYNTHETIC_ALLOWED = "synthetic_allowed"
+_FALLBACK_POLICY_BEST_EFFORT = "best_effort"
+_FALLBACK_POLICY_LIVE_ONLY = "live_only"
+_FALLBACK_POLICIES = {
+    _FALLBACK_POLICY_SYNTHETIC_ALLOWED,
+    _FALLBACK_POLICY_BEST_EFFORT,
+    _FALLBACK_POLICY_LIVE_ONLY,
+}
 _OPENAI_RESPONSES_PATHS = {"/responses", "/v1/responses"}
 _OPENAI_TOOL_REQUEST_TYPES = {
     "function_call",
@@ -99,6 +111,28 @@ def _resolve_upstream_timeout_seconds() -> float:
     if parsed <= 0:
         return _UPSTREAM_DEFAULT_TIMEOUT_SECONDS
     return min(parsed, 120.0)
+
+
+def _resolve_upstream_retries() -> int:
+    raw = os.environ.get(_UPSTREAM_RETRIES_ENV)
+    if raw is None:
+        return _UPSTREAM_DEFAULT_RETRIES
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return _UPSTREAM_DEFAULT_RETRIES
+    return max(0, min(parsed, 5))
+
+
+def _resolve_upstream_retry_backoff_seconds() -> float:
+    raw = os.environ.get(_UPSTREAM_RETRY_BACKOFF_ENV)
+    if raw is None:
+        return _UPSTREAM_DEFAULT_RETRY_BACKOFF_SECONDS
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return _UPSTREAM_DEFAULT_RETRY_BACKOFF_SECONDS
+    return max(0.0, min(parsed, 5.0))
 
 
 def _resolve_payload_string_limit() -> int:
@@ -219,7 +253,9 @@ def _forward_provider_request(
     payload: dict[str, Any],
     headers: dict[str, str],
     timeout_seconds: float,
-) -> tuple[int, dict[str, Any], str | None]:
+    retries: int,
+    retry_backoff_seconds: float,
+) -> tuple[int, dict[str, Any], str | None, int]:
     target_url = f"{upstream_base_url}{path}"
     forward_headers = {
         key: value
@@ -233,34 +269,51 @@ def _forward_provider_request(
         forward_headers["content-type"] = "application/json"
 
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    request = urllib_request.Request(
-        target_url,
-        data=body,
-        headers=forward_headers,
-        method="POST",
-    )
+    attempts = max(1, int(retries) + 1)
     opener = urllib_request.build_opener(urllib_request.ProxyHandler({}))
-    try:
-        with opener.open(request, timeout=timeout_seconds) as response:
-            status_code = int(response.status)
-            raw_body = response.read().decode("utf-8")
-    except urllib_error.HTTPError as error:
-        status_code = int(error.code)
-        raw_body = error.read().decode("utf-8")
-    except (urllib_error.URLError, TimeoutError, OSError, ValueError) as error:
-        return 0, {}, str(error)
+    last_error: str | None = None
 
-    if not raw_body:
-        parsed_body: dict[str, Any] = {}
-    else:
+    for attempt in range(1, attempts + 1):
+        request = urllib_request.Request(
+            target_url,
+            data=body,
+            headers=forward_headers,
+            method="POST",
+        )
         try:
-            parsed_payload = json.loads(raw_body)
-        except json.JSONDecodeError:
-            return 0, {}, "upstream returned non-JSON response body"
-        if not isinstance(parsed_payload, dict):
-            return 0, {}, "upstream returned non-object JSON response body"
-        parsed_body = parsed_payload
-    return status_code, parsed_body, None
+            with opener.open(request, timeout=timeout_seconds) as response:
+                status_code = int(response.status)
+                raw_body = response.read().decode("utf-8")
+        except urllib_error.HTTPError as error:
+            status_code = int(error.code)
+            raw_body = error.read().decode("utf-8")
+            if status_code >= 500 and attempt < attempts:
+                sleep_seconds = retry_backoff_seconds * attempt
+                if sleep_seconds > 0:
+                    time.sleep(min(sleep_seconds, 5.0))
+                continue
+        except (urllib_error.URLError, TimeoutError, OSError, ValueError) as error:
+            last_error = str(error)
+            if attempt < attempts:
+                sleep_seconds = retry_backoff_seconds * attempt
+                if sleep_seconds > 0:
+                    time.sleep(min(sleep_seconds, 5.0))
+                continue
+            return 0, {}, last_error, attempt
+
+        if not raw_body:
+            parsed_body: dict[str, Any] = {}
+        else:
+            try:
+                parsed_payload = json.loads(raw_body)
+            except json.JSONDecodeError:
+                return 0, {}, "upstream returned non-JSON response body", attempt
+            if not isinstance(parsed_payload, dict):
+                return 0, {}, "upstream returned non-object JSON response body", attempt
+            parsed_body = parsed_payload
+        return status_code, parsed_body, None, attempt
+
+    return 0, {}, last_error or "upstream request failed", attempts
 
 
 class _ListenerRunRecorder:
@@ -271,13 +324,24 @@ class _ListenerRunRecorder:
         out_path: Path,
         host: str,
         port: int,
-        allow_synthetic: bool,
+        fallback_policy: str,
         payload_string_limit: int,
+        upstream_timeout_seconds: float,
+        upstream_retries: int,
+        upstream_retry_backoff_seconds: float,
     ) -> None:
         self._lock = threading.Lock()
         self._out_path = out_path
-        self._allow_synthetic = allow_synthetic
+        normalized_policy = str(fallback_policy).strip().lower()
+        if normalized_policy not in _FALLBACK_POLICIES:
+            normalized_policy = _FALLBACK_POLICY_SYNTHETIC_ALLOWED
+        self._fallback_policy = normalized_policy
         self._payload_string_limit = max(0, int(payload_string_limit))
+        self._upstream_timeout_seconds = max(0.1, min(float(upstream_timeout_seconds), 120.0))
+        self._upstream_retries = max(0, min(int(upstream_retries), 5))
+        self._upstream_retry_backoff_seconds = max(
+            0.0, min(float(upstream_retry_backoff_seconds), 5.0)
+        )
         self._step_sequence = 0
         self._request_sequence = 0
         self._agent_event_sequence = 0
@@ -310,6 +374,14 @@ class _ListenerRunRecorder:
     def out_path(self) -> Path:
         return self._out_path
 
+    @property
+    def fallback_policy(self) -> str:
+        return self._fallback_policy
+
+    @property
+    def allow_synthetic(self) -> bool:
+        return self._fallback_policy == _FALLBACK_POLICY_SYNTHETIC_ALLOWED
+
     def record_provider_transaction(
         self,
         *,
@@ -341,16 +413,17 @@ class _ListenerRunRecorder:
             correlation_id = provider_request_fingerprint(request)
 
             response_source = "synthetic"
+            policy_outcome = "synthetic_response"
             synthetic_block_reason: str | None = None
+            best_effort_reason: str | None = None
+            upstream_attempts = 0
+            upstream_base_url = _resolve_provider_upstream_base_url(provider)
+            supports_upstream_forward = path not in {"/models", "/v1/models"}
+
             if fail_reason:
-                if self._allow_synthetic:
-                    status_code, response_payload, normalized_response = build_provider_response(
-                        request=request,
-                        sequence=self._request_sequence,
-                        fail_reason=fail_reason,
-                    )
-                else:
+                if self._fallback_policy == _FALLBACK_POLICY_LIVE_ONLY:
                     response_source = "synthetic_blocked"
+                    policy_outcome = "live_only_blocked"
                     synthetic_block_reason = str(fail_reason)
                     status_code, response_payload, normalized_response = build_provider_response(
                         request=request,
@@ -360,38 +433,67 @@ class _ListenerRunRecorder:
                             f"{synthetic_block_reason}"
                         ),
                     )
+                elif self._fallback_policy == _FALLBACK_POLICY_BEST_EFFORT:
+                    response_source = "best_effort_fallback"
+                    policy_outcome = "best_effort_fallback"
+                    best_effort_reason = str(fail_reason)
+                    status_code, response_payload = build_best_effort_fallback_response(
+                        provider=provider,
+                        sequence=self._request_sequence,
+                    )
+                    normalized_response = normalize_provider_response(
+                        provider=provider,
+                        status_code=status_code,
+                        payload=response_payload,
+                        stream=request.stream,
+                        path=path,
+                    )
+                else:
+                    response_source = "synthetic"
+                    policy_outcome = "synthetic_error"
+                    status_code, response_payload, normalized_response = build_provider_response(
+                        request=request,
+                        sequence=self._request_sequence,
+                        fail_reason=fail_reason,
+                    )
             else:
-                upstream_base_url = _resolve_provider_upstream_base_url(provider)
-                supports_upstream_forward = path not in {"/models", "/v1/models"}
                 if upstream_base_url and supports_upstream_forward:
                     response_source = "upstream"
                     (
                         status_code,
                         response_payload,
                         upstream_error,
+                        upstream_attempts,
                     ) = _forward_provider_request(
                         upstream_base_url=upstream_base_url,
                         path=path,
                         payload=request.payload,
                         headers=request.headers,
-                        timeout_seconds=_resolve_upstream_timeout_seconds(),
+                        timeout_seconds=self._upstream_timeout_seconds,
+                        retries=self._upstream_retries,
+                        retry_backoff_seconds=self._upstream_retry_backoff_seconds,
                     )
                     if upstream_error:
-                        if self._allow_synthetic:
-                            response_source = "upstream_error"
-                            status_code, response_payload, normalized_response = (
-                                build_provider_response(
-                                    request=request,
-                                    sequence=self._request_sequence,
-                                    fail_reason=f"upstream_forward_failed: {upstream_error}",
-                                )
+                        upstream_failure_reason = f"upstream_forward_failed: {upstream_error}"
+                        if self._fallback_policy == _FALLBACK_POLICY_BEST_EFFORT:
+                            response_source = "best_effort_fallback"
+                            policy_outcome = "best_effort_fallback"
+                            best_effort_reason = upstream_failure_reason
+                            status_code, response_payload = build_best_effort_fallback_response(
+                                provider=provider,
+                                sequence=self._request_sequence,
                             )
-                        else:
+                            normalized_response = normalize_provider_response(
+                                provider=provider,
+                                status_code=status_code,
+                                payload=response_payload,
+                                stream=request.stream,
+                                path=path,
+                            )
+                        elif self._fallback_policy == _FALLBACK_POLICY_LIVE_ONLY:
                             response_source = "synthetic_blocked"
-                            synthetic_block_reason = (
-                                "upstream_forward_failed: "
-                                f"{upstream_error}"
-                            )
+                            policy_outcome = "live_only_blocked"
+                            synthetic_block_reason = upstream_failure_reason
                             status_code, response_payload, normalized_response = (
                                 build_provider_response(
                                     request=request,
@@ -402,7 +504,19 @@ class _ListenerRunRecorder:
                                     ),
                                 )
                             )
+                        else:
+                            response_source = "upstream_error"
+                            policy_outcome = "synthetic_error"
+                            status_code, response_payload, normalized_response = (
+                                build_provider_response(
+                                    request=request,
+                                    sequence=self._request_sequence,
+                                    fail_reason=upstream_failure_reason,
+                                )
+                            )
                     else:
+                        response_source = "upstream"
+                        policy_outcome = "live_upstream"
                         normalized_response = normalize_provider_response(
                             provider=provider,
                             status_code=status_code,
@@ -410,14 +524,9 @@ class _ListenerRunRecorder:
                             path=path,
                         )
                 else:
-                    if self._allow_synthetic or not supports_upstream_forward:
-                        status_code, response_payload, normalized_response = build_provider_response(
-                            request=request,
-                            sequence=self._request_sequence,
-                            fail_reason=None,
-                        )
-                    else:
+                    if supports_upstream_forward and self._fallback_policy == _FALLBACK_POLICY_LIVE_ONLY:
                         response_source = "synthetic_blocked"
+                        policy_outcome = "live_only_blocked"
                         synthetic_block_reason = "no_upstream_configured"
                         status_code, response_payload, normalized_response = build_provider_response(
                             request=request,
@@ -426,6 +535,29 @@ class _ListenerRunRecorder:
                                 "synthetic_fallback_blocked_by_policy: "
                                 f"{synthetic_block_reason}"
                             ),
+                        )
+                    elif supports_upstream_forward and self._fallback_policy == _FALLBACK_POLICY_BEST_EFFORT:
+                        response_source = "best_effort_fallback"
+                        policy_outcome = "best_effort_fallback"
+                        best_effort_reason = "no_upstream_configured"
+                        status_code, response_payload = build_best_effort_fallback_response(
+                            provider=provider,
+                            sequence=self._request_sequence,
+                        )
+                        normalized_response = normalize_provider_response(
+                            provider=provider,
+                            status_code=status_code,
+                            payload=response_payload,
+                            stream=request.stream,
+                            path=path,
+                        )
+                    else:
+                        response_source = "synthetic"
+                        policy_outcome = "synthetic_response"
+                        status_code, response_payload, normalized_response = build_provider_response(
+                            request=request,
+                            sequence=self._request_sequence,
+                            fail_reason=None,
                         )
 
             self._run.steps.append(
@@ -450,7 +582,14 @@ class _ListenerRunRecorder:
                             "request_id": request.request_id,
                             "correlation_id": correlation_id,
                             "capture_mode": "passive",
+                            "fallback_policy": self._fallback_policy,
+                            "policy_outcome": policy_outcome,
                             "response_source": response_source,
+                            "upstream_base_url": upstream_base_url,
+                            "upstream_attempts": upstream_attempts,
+                            "upstream_timeout_seconds": self._upstream_timeout_seconds,
+                            "upstream_retries": self._upstream_retries,
+                            "upstream_retry_backoff_seconds": self._upstream_retry_backoff_seconds,
                             "payload_truncated_fields": truncated_fields,
                             "payload_string_limit": self._payload_string_limit,
                         }
@@ -512,6 +651,10 @@ class _ListenerRunRecorder:
                                     "path": path,
                                     "request_id": request.request_id,
                                     "reason": synthetic_block_reason,
+                                    "fallback_policy": self._fallback_policy,
+                                    "policy_outcome": policy_outcome,
+                                    "upstream_base_url": upstream_base_url,
+                                    "upstream_attempts": upstream_attempts,
                                 },
                             }
                         ),
@@ -524,6 +667,51 @@ class _ListenerRunRecorder:
                                 "request_id": request.request_id,
                                 "correlation_id": correlation_id,
                                 "capture_mode": "passive",
+                                "fallback_policy": self._fallback_policy,
+                                "policy_outcome": policy_outcome,
+                            }
+                        ),
+                        timestamp=_utc_now(),
+                    )
+                )
+            if best_effort_reason is not None:
+                self._run.steps.append(
+                    Step(
+                        id=self._next_step_id(),
+                        type="error.event",
+                        input=redact_listener_value(
+                            {
+                                "source": "listener",
+                                "category": "best_effort_fallback",
+                                "request_id": request.request_id,
+                            }
+                        ),
+                        output=redact_listener_value(
+                            {
+                                "message": "best-effort fallback applied after upstream/capture failure",
+                                "details": {
+                                    "provider": provider,
+                                    "path": path,
+                                    "request_id": request.request_id,
+                                    "reason": best_effort_reason,
+                                    "fallback_policy": self._fallback_policy,
+                                    "policy_outcome": policy_outcome,
+                                    "upstream_base_url": upstream_base_url,
+                                    "upstream_attempts": upstream_attempts,
+                                },
+                            }
+                        ),
+                        metadata=redact_listener_value(
+                            {
+                                "source": "listener",
+                                "category": "best_effort_fallback",
+                                "provider": provider,
+                                "path": path,
+                                "request_id": request.request_id,
+                                "correlation_id": correlation_id,
+                                "capture_mode": "passive",
+                                "fallback_policy": self._fallback_policy,
+                                "policy_outcome": policy_outcome,
                             }
                         ),
                         timestamp=_utc_now(),
@@ -555,7 +743,14 @@ class _ListenerRunRecorder:
                             "request_id": request.request_id,
                             "correlation_id": correlation_id,
                             "capture_mode": "passive",
+                            "fallback_policy": self._fallback_policy,
+                            "policy_outcome": policy_outcome,
                             "response_source": response_source,
+                            "upstream_base_url": upstream_base_url,
+                            "upstream_attempts": upstream_attempts,
+                            "upstream_timeout_seconds": self._upstream_timeout_seconds,
+                            "upstream_retries": self._upstream_retries,
+                            "upstream_retry_backoff_seconds": self._upstream_retry_backoff_seconds,
                         }
                     ),
                     timestamp=_utc_now(),
@@ -867,23 +1062,42 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                 )
             except Exception as error:
                 capture_error_count = self.server.register_capture_error()
-                degraded_sequence = self.server.register_degraded_response()
+                internal_message = "listener capture path failed; served degraded fallback response"
+                policy_outcome = "live_only_error"
+                if recorder.fallback_policy == _FALLBACK_POLICY_LIVE_ONLY:
+                    internal_message = "listener capture path failed; live_only returned strict error"
+                    status_code = 502
+                    response_body = {
+                        "error": {
+                            "type": "listener_capture_error",
+                            "message": (
+                                "listener capture path failed and fallback policy live_only "
+                                "forbids degraded/synthetic responses"
+                            ),
+                            "policy": recorder.fallback_policy,
+                        }
+                    }
+                else:
+                    policy_outcome = "best_effort_fallback"
+                    degraded_sequence = self.server.register_degraded_response()
+                    status_code, response_body = build_best_effort_fallback_response(
+                        provider="openai",
+                        sequence=degraded_sequence,
+                    )
+                    if status_code == 200:
+                        response_body = build_openai_models_payload()
                 recorder.record_internal_error(
                     category="capture_failure",
-                    message="listener capture path failed; served degraded fallback response",
+                    message=internal_message,
                     details={
                         "provider": "openai",
                         "path": parsed.path,
                         "error": str(error),
                         "capture_error_count": capture_error_count,
+                        "fallback_policy": recorder.fallback_policy,
+                        "policy_outcome": policy_outcome,
                     },
                 )
-                status_code, response_body = build_best_effort_fallback_response(
-                    provider="openai",
-                    sequence=degraded_sequence,
-                )
-                if status_code == 200:
-                    response_body = build_openai_models_payload()
             self._write_json(status_code, response_body)
             return
         if parsed.path == "/health":
@@ -988,20 +1202,39 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             )
         except Exception as error:
             capture_error_count = self.server.register_capture_error()
-            degraded_sequence = self.server.register_degraded_response()
+            internal_message = "listener capture path failed; served degraded fallback response"
+            policy_outcome = "live_only_error"
+            if recorder.fallback_policy == _FALLBACK_POLICY_LIVE_ONLY:
+                internal_message = "listener capture path failed; live_only returned strict error"
+                status_code = 502
+                response_body = {
+                    "error": {
+                        "type": "listener_capture_error",
+                        "message": (
+                            "listener capture path failed and fallback policy live_only "
+                            "forbids degraded/synthetic responses"
+                        ),
+                        "policy": recorder.fallback_policy,
+                    }
+                }
+            else:
+                policy_outcome = "best_effort_fallback"
+                degraded_sequence = self.server.register_degraded_response()
+                status_code, response_body = build_best_effort_fallback_response(
+                    provider=provider,
+                    sequence=degraded_sequence,
+                )
             recorder.record_internal_error(
                 category="capture_failure",
-                message="listener capture path failed; served degraded fallback response",
+                message=internal_message,
                 details={
                     "provider": provider,
                     "path": parsed.path,
                     "error": str(error),
                     "capture_error_count": capture_error_count,
+                    "fallback_policy": recorder.fallback_policy,
+                    "policy_outcome": policy_outcome,
                 },
-            )
-            status_code, response_body = build_best_effort_fallback_response(
-                provider=provider,
-                sequence=degraded_sequence,
             )
             self._write_json(status_code, response_body)
             return
@@ -1235,9 +1468,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Max string length for captured request payload values (0 disables truncation).",
     )
     parser.add_argument(
+        "--fallback-policy",
+        default=_FALLBACK_POLICY_SYNTHETIC_ALLOWED,
+        choices=sorted(_FALLBACK_POLICIES),
+        help=(
+            "Fallback policy when live upstream forwarding is unavailable or fails: "
+            "synthetic_allowed, best_effort, or live_only."
+        ),
+    )
+    parser.add_argument(
+        "--upstream-timeout-seconds",
+        default=_resolve_upstream_timeout_seconds(),
+        type=float,
+        help="Timeout in seconds for each upstream provider request attempt.",
+    )
+    parser.add_argument(
+        "--upstream-retries",
+        default=_resolve_upstream_retries(),
+        type=int,
+        help="Number of upstream retry attempts for transport errors or HTTP 5xx responses.",
+    )
+    parser.add_argument(
+        "--upstream-retry-backoff-seconds",
+        default=_resolve_upstream_retry_backoff_seconds(),
+        type=float,
+        help="Linear backoff base seconds applied between upstream retries.",
+    )
+    parser.add_argument(
         "--fail-on-synthetic",
         action="store_true",
-        help="Block synthetic fallback responses when live upstream forwarding is unavailable.",
+        help="Deprecated alias for --fallback-policy live_only.",
     )
     return parser
 
@@ -1302,9 +1562,14 @@ def _runtime_payload(
     host: str,
     port: int,
     out_path: Path,
-    allow_synthetic: bool,
+    fallback_policy: str,
     payload_string_limit: int,
+    upstream_timeout_seconds: float,
+    upstream_retries: int,
+    upstream_retry_backoff_seconds: float,
 ) -> dict[str, Any]:
+    normalized_policy = str(fallback_policy).strip().lower()
+    allow_synthetic = normalized_policy == _FALLBACK_POLICY_SYNTHETIC_ALLOWED
     return {
         "status": "running",
         "listener_session_id": session_id,
@@ -1314,6 +1579,10 @@ def _runtime_payload(
         "artifact_path": str(out_path),
         "allow_synthetic": allow_synthetic,
         "synthetic_policy": "allow" if allow_synthetic else "fail_closed",
+        "fallback_policy": normalized_policy,
+        "upstream_timeout_seconds": upstream_timeout_seconds,
+        "upstream_retries": upstream_retries,
+        "upstream_retry_backoff_seconds": upstream_retry_backoff_seconds,
         "payload_string_limit": payload_string_limit,
         "full_payload_capture": payload_string_limit <= 0,
         "started_at": _utc_now(),
@@ -1329,6 +1598,15 @@ def _runtime_payload(
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     server: _ReplayListenerServer | None = None
+    fallback_policy = str(args.fallback_policy).strip().lower()
+    if args.fail_on_synthetic:
+        fallback_policy = _FALLBACK_POLICY_LIVE_ONLY
+    if fallback_policy not in _FALLBACK_POLICIES:
+        fallback_policy = _FALLBACK_POLICY_SYNTHETIC_ALLOWED
+
+    upstream_timeout_seconds = max(0.1, min(float(args.upstream_timeout_seconds), 120.0))
+    upstream_retries = max(0, min(int(args.upstream_retries), 5))
+    upstream_retry_backoff_seconds = max(0.0, min(float(args.upstream_retry_backoff_seconds), 5.0))
 
     try:
         server = _ReplayListenerServer(
@@ -1348,8 +1626,11 @@ def main(argv: list[str] | None = None) -> int:
         out_path=args.out,
         host=host,
         port=port,
-        allow_synthetic=not bool(args.fail_on_synthetic),
+        fallback_policy=fallback_policy,
         payload_string_limit=max(0, int(args.payload_string_limit)),
+        upstream_timeout_seconds=upstream_timeout_seconds,
+        upstream_retries=upstream_retries,
+        upstream_retry_backoff_seconds=upstream_retry_backoff_seconds,
     )
     write_listener_state(
         args.state_file,
@@ -1358,8 +1639,11 @@ def main(argv: list[str] | None = None) -> int:
             host=host,
             port=port,
             out_path=args.out,
-            allow_synthetic=not bool(args.fail_on_synthetic),
+            fallback_policy=fallback_policy,
             payload_string_limit=max(0, int(args.payload_string_limit)),
+            upstream_timeout_seconds=upstream_timeout_seconds,
+            upstream_retries=upstream_retries,
+            upstream_retry_backoff_seconds=upstream_retry_backoff_seconds,
         ),
     )
 
