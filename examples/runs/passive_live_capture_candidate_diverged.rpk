@@ -1,0 +1,307 @@
+{
+  "checksum": "sha256:c3e18da0784f8ece0fe02441ace36594249a9544c6faf4e6fe794cf06d74b043",
+  "metadata": {
+    "created_at": "2026-02-26T00:00:00.000000Z",
+    "run_id": "run-passive-live-candidate-001"
+  },
+  "payload": {
+    "run": {
+      "capture_mode": "passive",
+      "environment_fingerprint": {
+        "os": "darwin",
+        "python": "3.12.2",
+        "session": "sanitized-live"
+      },
+      "id": "run-passive-live-candidate-001",
+      "listener_bind": {
+        "host": "127.0.0.1",
+        "port": 61234
+      },
+      "listener_process": {
+        "pid": 4242
+      },
+      "listener_session_id": "listener-live-golden-001",
+      "provider": "openai",
+      "runtime_versions": {
+        "python": "3.12.2",
+        "replaypack": "0.1.0"
+      },
+      "source": "listener",
+      "steps": [
+        {
+          "hash": "sha256:e23790953fa53fed6487439c4e2f51b53548023e2404f98868d99aa94666bb07",
+          "id": "step-live-001",
+          "input": {
+            "input": [
+              {
+                "content": [
+                  {
+                    "text": "summarize the repo",
+                    "type": "input_text"
+                  }
+                ],
+                "role": "user",
+                "type": "message"
+              },
+              {
+                "call_id": "call-live-0001",
+                "name": "shell",
+                "output": {
+                  "stdout": "README.md\nAGENTS.md\n"
+                },
+                "type": "function_call_output"
+              }
+            ],
+            "model": "gpt-5.3-codex",
+            "stream": true
+          },
+          "metadata": {
+            "capture_mode": "passive",
+            "correlation_id": "req-live-0001",
+            "path": "/responses",
+            "provider": "openai",
+            "request_id": "openai-request-live-0001",
+            "response_source": "upstream"
+          },
+          "output": {
+            "status": "captured"
+          },
+          "timestamp": "2026-02-26T00:00:01.000000Z",
+          "type": "model.request"
+        },
+        {
+          "hash": "sha256:9009fe44d108f0204c949d123c4553c8dcec8db7c5614ec9bceed462d9dafd03",
+          "id": "step-live-002",
+          "input": {
+            "call_id": "call-live-0001",
+            "tool": "shell",
+            "type": "function_call_output"
+          },
+          "metadata": {
+            "capture_mode": "passive",
+            "correlation_id": "req-live-0001",
+            "derived_from": "openai.responses.request_input",
+            "path": "/responses",
+            "provider": "openai",
+            "request_id": "openai-request-live-0001"
+          },
+          "output": {
+            "result": {
+              "stdout": "README.md\nAGENTS.md\n"
+            }
+          },
+          "timestamp": "2026-02-26T00:00:02.000000Z",
+          "type": "tool.response"
+        },
+        {
+          "hash": "sha256:abf5211840ab6ba8e3241ecbc069dd58a54139ef02507f4db2db841d2df6e331",
+          "id": "step-live-003",
+          "input": {
+            "request_id": "openai-request-live-0001"
+          },
+          "metadata": {
+            "capture_mode": "passive",
+            "correlation_id": "req-live-0001",
+            "path": "/responses",
+            "provider": "openai",
+            "request_id": "openai-request-live-0001",
+            "response_source": "upstream"
+          },
+          "output": {
+            "assembled_text": "I am reading the README to summarize key points.",
+            "output": {
+              "id": "resp-live-0001",
+              "model": "gpt-5.3-codex",
+              "object": "response",
+              "output": [
+                {
+                  "arguments": {
+                    "command": "cat README.md | head -n 3"
+                  },
+                  "call_id": "call-live-0002",
+                  "name": "shell",
+                  "type": "function_call"
+                },
+                {
+                  "content": [
+                    {
+                      "text": "I am reading the README to summarize key points.",
+                      "type": "output_text"
+                    }
+                  ],
+                  "role": "assistant",
+                  "type": "message"
+                }
+              ],
+              "output_text": "I am reading the README to summarize key points.",
+              "status": "completed"
+            },
+            "stream": {
+              "completion_state": "completed",
+              "event_count": 3,
+              "event_types": [
+                "response.output_text.delta",
+                "response.output_text.delta",
+                "response.completed"
+              ],
+              "events": [
+                {
+                  "delta": "I am reading the README ",
+                  "type": "response.output_text.delta"
+                },
+                {
+                  "delta": "to summarize key points.",
+                  "type": "response.output_text.delta"
+                },
+                {
+                  "terminal": true,
+                  "type": "response.completed"
+                }
+              ],
+              "outcome": "completed",
+              "terminal_event_type": "response.completed"
+            }
+          },
+          "timestamp": "2026-02-26T00:00:03.000000Z",
+          "type": "model.response"
+        },
+        {
+          "hash": "sha256:954987a045a2ff5f15c1559deface6db539d733ad70f39fb29796a69a6aa7399",
+          "id": "step-live-004",
+          "input": {
+            "arguments": {
+              "command": "cat README.md | head -n 3"
+            },
+            "call_id": "call-live-0002",
+            "tool": "shell"
+          },
+          "metadata": {
+            "capture_mode": "passive",
+            "correlation_id": "req-live-0001",
+            "derived_from": "openai.responses.response_output",
+            "event_type": "function_call",
+            "path": "/responses",
+            "provider": "openai",
+            "request_id": "openai-request-live-0001"
+          },
+          "output": {
+            "status": "captured"
+          },
+          "timestamp": "2026-02-26T00:00:04.000000Z",
+          "type": "tool.request"
+        },
+        {
+          "hash": "sha256:6f59dda2a7ca1e856aa8248de3b86cc39ccae9578233dc567bdfc9c8c7304f53",
+          "id": "step-live-005",
+          "input": {
+            "input": [
+              {
+                "call_id": "call-live-0002",
+                "name": "shell",
+                "output": {
+                  "stdout": "# ReplayKit\n\nReplay debugging toolkit."
+                },
+                "type": "function_call_output"
+              }
+            ],
+            "model": "gpt-5.3-codex",
+            "stream": false
+          },
+          "metadata": {
+            "capture_mode": "passive",
+            "correlation_id": "req-live-0002",
+            "path": "/responses",
+            "provider": "openai",
+            "request_id": "openai-request-live-0002",
+            "response_source": "upstream"
+          },
+          "output": {
+            "status": "captured"
+          },
+          "timestamp": "2026-02-26T00:00:05.000000Z",
+          "type": "model.request"
+        },
+        {
+          "hash": "sha256:d43b6e1560e177ce8129962195ada78410485cf1c78cf42d25d98bc8916ae816",
+          "id": "step-live-006",
+          "input": {
+            "call_id": "call-live-0002",
+            "tool": "shell",
+            "type": "function_call_output"
+          },
+          "metadata": {
+            "capture_mode": "passive",
+            "correlation_id": "req-live-0002",
+            "derived_from": "openai.responses.request_input",
+            "path": "/responses",
+            "provider": "openai",
+            "request_id": "openai-request-live-0002"
+          },
+          "output": {
+            "result": {
+              "stdout": "# ReplayKit\n\nReplay debugging toolkit."
+            }
+          },
+          "timestamp": "2026-02-26T00:00:06.000000Z",
+          "type": "tool.response"
+        },
+        {
+          "hash": "sha256:fb0644bc02cc0fc85e93bc49d6e846ab6fe00ae65a97635e805250ad983ef00c",
+          "id": "step-live-007",
+          "input": {
+            "request_id": "openai-request-live-0002"
+          },
+          "metadata": {
+            "capture_mode": "passive",
+            "correlation_id": "req-live-0002",
+            "path": "/responses",
+            "provider": "openai",
+            "request_id": "openai-request-live-0002",
+            "response_source": "upstream"
+          },
+          "output": {
+            "assembled_text": "ReplayKit is a deterministic replay toolkit focused on first-divergence debugging.",
+            "output": {
+              "id": "resp-live-0002",
+              "model": "gpt-5.3-codex",
+              "object": "response",
+              "output": [
+                {
+                  "content": [
+                    {
+                      "text": "ReplayKit is a deterministic replay toolkit focused on first-divergence debugging.",
+                      "type": "output_text"
+                    }
+                  ],
+                  "role": "assistant",
+                  "type": "message"
+                }
+              ],
+              "output_text": "ReplayKit is a deterministic replay toolkit focused on first-divergence debugging.",
+              "status": "completed"
+            },
+            "stream": {
+              "completion_state": "completed",
+              "event_count": 1,
+              "event_types": [
+                "response.completed"
+              ],
+              "events": [
+                {
+                  "terminal": true,
+                  "type": "response.completed"
+                }
+              ],
+              "outcome": "not_streaming",
+              "terminal_event_type": "response.completed"
+            }
+          },
+          "timestamp": "2026-02-26T00:00:07.000000Z",
+          "type": "model.response"
+        }
+      ],
+      "timestamp": "2026-02-26T00:00:00.000000Z"
+    }
+  },
+  "version": "1.0"
+}
