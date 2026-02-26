@@ -57,6 +57,8 @@ _UPSTREAM_ENV_BY_PROVIDER = {
 _UPSTREAM_ENV_FALLBACK = "REPLAYKIT_PROVIDER_UPSTREAM_URL"
 _UPSTREAM_TIMEOUT_ENV = "REPLAYKIT_LISTENER_UPSTREAM_TIMEOUT_SECONDS"
 _UPSTREAM_DEFAULT_TIMEOUT_SECONDS = 5.0
+_PAYLOAD_STRING_LIMIT_ENV = "REPLAYKIT_LISTENER_PAYLOAD_STRING_LIMIT"
+_PAYLOAD_STRING_DEFAULT_LIMIT = 4096
 _OPENAI_RESPONSES_PATHS = {"/responses", "/v1/responses"}
 _OPENAI_TOOL_REQUEST_TYPES = {
     "function_call",
@@ -97,6 +99,42 @@ def _resolve_upstream_timeout_seconds() -> float:
     if parsed <= 0:
         return _UPSTREAM_DEFAULT_TIMEOUT_SECONDS
     return min(parsed, 120.0)
+
+
+def _resolve_payload_string_limit() -> int:
+    raw = os.environ.get(_PAYLOAD_STRING_LIMIT_ENV)
+    if raw is None:
+        return _PAYLOAD_STRING_DEFAULT_LIMIT
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return _PAYLOAD_STRING_DEFAULT_LIMIT
+    return max(0, parsed)
+
+
+def _truncate_payload_strings(value: Any, *, limit: int) -> tuple[Any, int]:
+    if limit <= 0:
+        return value, 0
+    truncated_count = 0
+
+    def _walk(current: Any) -> Any:
+        nonlocal truncated_count
+        if isinstance(current, dict):
+            return {
+                str(key): _walk(val)
+                for key, val in sorted(current.items(), key=lambda item: str(item[0]))
+            }
+        if isinstance(current, list):
+            return [_walk(item) for item in current]
+        if isinstance(current, tuple):
+            return [_walk(item) for item in current]
+        if isinstance(current, str) and len(current) > limit:
+            truncated_count += 1
+            overflow = len(current) - limit
+            return f"{current[:limit]}...[TRUNCATED {overflow} chars]"
+        return current
+
+    return _walk(value), truncated_count
 
 
 def _extract_openai_tool_requests_from_response(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -234,10 +272,12 @@ class _ListenerRunRecorder:
         host: str,
         port: int,
         allow_synthetic: bool,
+        payload_string_limit: int,
     ) -> None:
         self._lock = threading.Lock()
         self._out_path = out_path
         self._allow_synthetic = allow_synthetic
+        self._payload_string_limit = max(0, int(payload_string_limit))
         self._step_sequence = 0
         self._request_sequence = 0
         self._agent_event_sequence = 0
@@ -293,6 +333,10 @@ class _ListenerRunRecorder:
                 payload=payload,
                 headers=headers,
                 request_id=request_id,
+            )
+            minimized_payload, truncated_fields = _truncate_payload_strings(
+                request.payload,
+                limit=self._payload_string_limit,
             )
             correlation_id = provider_request_fingerprint(request)
 
@@ -395,7 +439,7 @@ class _ListenerRunRecorder:
                         "model": request.model,
                         "stream": request.stream,
                         "headers": redact_listener_headers(request.headers),
-                        "payload": redact_listener_value(request.payload),
+                        "payload": redact_listener_value(minimized_payload),
                     },
                     output={"status": "captured"},
                     metadata=redact_listener_value(
@@ -406,6 +450,8 @@ class _ListenerRunRecorder:
                             "correlation_id": correlation_id,
                             "capture_mode": "passive",
                             "response_source": response_source,
+                            "payload_truncated_fields": truncated_fields,
+                            "payload_string_limit": self._payload_string_limit,
                         }
                     ),
                     timestamp=_utc_now(),
@@ -1146,6 +1192,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
     )
     parser.add_argument(
+        "--payload-string-limit",
+        default=_resolve_payload_string_limit(),
+        type=int,
+        help="Max string length for captured request payload values (0 disables truncation).",
+    )
+    parser.add_argument(
         "--fail-on-synthetic",
         action="store_true",
         help="Block synthetic fallback responses when live upstream forwarding is unavailable.",
@@ -1214,6 +1266,7 @@ def _runtime_payload(
     port: int,
     out_path: Path,
     allow_synthetic: bool,
+    payload_string_limit: int,
 ) -> dict[str, Any]:
     return {
         "status": "running",
@@ -1224,6 +1277,8 @@ def _runtime_payload(
         "artifact_path": str(out_path),
         "allow_synthetic": allow_synthetic,
         "synthetic_policy": "allow" if allow_synthetic else "fail_closed",
+        "payload_string_limit": payload_string_limit,
+        "full_payload_capture": payload_string_limit <= 0,
         "started_at": _utc_now(),
         "process": {
             "pid": os.getpid(),
@@ -1257,6 +1312,7 @@ def main(argv: list[str] | None = None) -> int:
         host=host,
         port=port,
         allow_synthetic=not bool(args.fail_on_synthetic),
+        payload_string_limit=max(0, int(args.payload_string_limit)),
     )
     write_listener_state(
         args.state_file,
@@ -1266,6 +1322,7 @@ def main(argv: list[str] | None = None) -> int:
             port=port,
             out_path=args.out,
             allow_synthetic=not bool(args.fail_on_synthetic),
+            payload_string_limit=max(0, int(args.payload_string_limit)),
         ),
     )
 

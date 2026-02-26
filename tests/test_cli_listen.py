@@ -29,6 +29,8 @@ def test_cli_listen_start_status_stop_cycle_json(tmp_path: Path) -> None:
     assert started["port"] > 0
     assert started["allow_synthetic"] is True
     assert started["synthetic_policy"] == "allow"
+    assert started["payload_string_limit"] == 4096
+    assert started["full_payload_capture"] is False
 
     status_running = runner.invoke(
         app,
@@ -48,6 +50,8 @@ def test_cli_listen_start_status_stop_cycle_json(tmp_path: Path) -> None:
     assert running_payload["healthy"] is True
     assert running_payload["allow_synthetic"] is True
     assert running_payload["synthetic_policy"] == "allow"
+    assert running_payload["payload_string_limit"] == 4096
+    assert running_payload["full_payload_capture"] is False
 
     stop = runner.invoke(
         app,
@@ -230,6 +234,8 @@ def test_cli_listen_start_with_fail_on_synthetic_exposes_policy(tmp_path: Path) 
     started = json.loads(start.stdout.strip())
     assert started["allow_synthetic"] is False
     assert started["synthetic_policy"] == "fail_closed"
+    assert started["payload_string_limit"] == 4096
+    assert started["full_payload_capture"] is False
 
     status = runner.invoke(
         app,
@@ -245,6 +251,56 @@ def test_cli_listen_start_with_fail_on_synthetic_exposes_policy(tmp_path: Path) 
     running_payload = json.loads(status.stdout.strip())
     assert running_payload["allow_synthetic"] is False
     assert running_payload["synthetic_policy"] == "fail_closed"
+    assert running_payload["payload_string_limit"] == 4096
+    assert running_payload["full_payload_capture"] is False
+
+    stop = runner.invoke(
+        app,
+        [
+            "listen",
+            "stop",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert stop.exit_code == 0, stop.output
+
+
+def test_cli_listen_start_with_full_payload_capture_exposes_policy(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+
+    start = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--full-payload-capture",
+            "--json",
+        ],
+    )
+    assert start.exit_code == 0, start.output
+    started = json.loads(start.stdout.strip())
+    assert started["payload_string_limit"] == 0
+    assert started["full_payload_capture"] is True
+
+    status = runner.invoke(
+        app,
+        [
+            "listen",
+            "status",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert status.exit_code == 0, status.output
+    running_payload = json.loads(status.stdout.strip())
+    assert running_payload["payload_string_limit"] == 0
+    assert running_payload["full_payload_capture"] is True
 
     stop = runner.invoke(
         app,

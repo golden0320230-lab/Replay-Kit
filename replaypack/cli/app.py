@@ -409,6 +409,20 @@ def listen_start(
             "is unavailable."
         ),
     ),
+    payload_string_limit: int = typer.Option(
+        4096,
+        "--payload-string-limit",
+        min=0,
+        help=(
+            "Max string length for captured request payload values "
+            "(0 disables truncation)."
+        ),
+    ),
+    full_payload_capture: bool = typer.Option(
+        False,
+        "--full-payload-capture",
+        help="Disable payload string truncation and capture full request payload strings.",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -490,6 +504,8 @@ def listen_start(
         session_id,
         "--out",
         str(out),
+        "--payload-string-limit",
+        str(0 if full_payload_capture else payload_string_limit),
     ]
     if not allow_synthetic:
         command.append("--fail-on-synthetic")
@@ -572,6 +588,8 @@ def listen_start(
         "artifact_out": started_state.get("artifact_path"),
         "allow_synthetic": bool(started_state.get("allow_synthetic", True)),
         "synthetic_policy": str(started_state.get("synthetic_policy", "allow")),
+        "payload_string_limit": int(started_state.get("payload_string_limit", 4096)),
+        "full_payload_capture": bool(started_state.get("full_payload_capture", False)),
         "stale_cleanup": stale_cleanup,
     }
     if json_output:
@@ -764,6 +782,8 @@ def listen_status(
         "artifact_out": running_state.get("artifact_path"),
         "allow_synthetic": bool(running_state.get("allow_synthetic", True)),
         "synthetic_policy": str(running_state.get("synthetic_policy", "allow")),
+        "payload_string_limit": int(running_state.get("payload_string_limit", 4096)),
+        "full_payload_capture": bool(running_state.get("full_payload_capture", False)),
         "healthy": healthy,
         "health": health,
         "stale_cleanup": stale_cleanup,
