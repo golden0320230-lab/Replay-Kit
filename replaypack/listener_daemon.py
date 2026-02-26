@@ -87,6 +87,21 @@ _OPENAI_TOOL_RESPONSE_TYPES = {
     "code_interpreter_call_output",
     "mcp_result",
 }
+_SUPPORTED_ROUTE_MATRIX: dict[str, tuple[str, ...]] = {
+    "GET": ("/health", "/models", "/v1/models"),
+    "POST": (
+        "/shutdown",
+        "/responses",
+        "/v1/responses",
+        "/v1/chat/completions",
+        "/chat/completions",
+        "/v1/messages",
+        "/messages",
+        "/v1beta/models/{model}:generateContent",
+        "/agent/codex/events",
+        "/agent/claude-code/events",
+    ),
+}
 
 
 def _resolve_provider_upstream_base_url(provider: str) -> str | None:
@@ -144,6 +159,50 @@ def _resolve_payload_string_limit() -> int:
     except ValueError:
         return _PAYLOAD_STRING_DEFAULT_LIMIT
     return max(0, parsed)
+
+
+def _normalize_route_path(path: str) -> str:
+    normalized = str(path or "").strip()
+    if not normalized:
+        return "/"
+    if normalized != "/":
+        normalized = normalized.rstrip("/")
+    return normalized or "/"
+
+
+def _route_response_for_unsupported(method: str, path: str) -> tuple[int, dict[str, Any]]:
+    normalized_method = method.upper().strip()
+    normalized_path = _normalize_route_path(path)
+    supported_for_method = _SUPPORTED_ROUTE_MATRIX.get(normalized_method, ())
+    for allowed_method, routes in _SUPPORTED_ROUTE_MATRIX.items():
+        if allowed_method == normalized_method:
+            continue
+        if normalized_path in routes:
+            return 405, {
+                "status": "error",
+                "code": "method_not_allowed",
+                "message": (
+                    f"{normalized_method} is not supported for route '{normalized_path}'. "
+                    f"Use {allowed_method}."
+                ),
+                "method": normalized_method,
+                "path": normalized_path,
+                "supported_methods": [allowed_method],
+                "hint": "Run `python3 -m replaypack listen status --json` to confirm listener health.",
+            }
+
+    return 404, {
+        "status": "error",
+        "code": "unsupported_route",
+        "message": f"unsupported route: {normalized_method} {normalized_path}",
+        "method": normalized_method,
+        "path": normalized_path,
+        "supported_paths": list(supported_for_method),
+        "hint": (
+            "Run `python3 -m replaypack listen env --state-file <state> --shell bash` "
+            "and route supported provider paths through the listener."
+        ),
+    }
 
 
 def _truncate_payload_strings(value: Any, *, limit: int) -> tuple[Any, int]:
@@ -1043,15 +1102,16 @@ class _ListenerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlsplit(self.path)
+        normalized_path = _normalize_route_path(parsed.path)
         recorder = self.server.recorder
         if recorder is None:
             self._write_json(503, {"status": "error", "message": "recorder not ready"})
             return
-        if parsed.path in {"/models", "/v1/models"}:
+        if normalized_path in {"/models", "/v1/models"}:
             try:
                 status_code, response_body = recorder.record_provider_transaction(
                     provider="openai",
-                    path=parsed.path,
+                    path=normalized_path,
                     query_params={
                         key: value
                         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
@@ -1091,7 +1151,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                     message=internal_message,
                     details={
                         "provider": "openai",
-                        "path": parsed.path,
+                        "path": normalized_path,
                         "error": str(error),
                         "capture_error_count": capture_error_count,
                         "fallback_policy": recorder.fallback_policy,
@@ -1100,7 +1160,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                 )
             self._write_json(status_code, response_body)
             return
-        if parsed.path == "/health":
+        if normalized_path == "/health":
             self._write_json(
                 200,
                 {
@@ -1112,11 +1172,13 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        self._write_json(404, {"status": "error", "message": "not found"})
+        status_code, payload = _route_response_for_unsupported("GET", normalized_path)
+        self._write_json(status_code, payload)
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlsplit(self.path)
-        if parsed.path == "/shutdown":
+        normalized_path = _normalize_route_path(parsed.path)
+        if normalized_path == "/shutdown":
             self._write_json(
                 200,
                 {"status": "ok", "message": "listener shutting down"},
@@ -1128,7 +1190,12 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             threading.Thread(target=_shutdown, daemon=True).start()
             return
 
-        agent = detect_agent(parsed.path)
+        if normalized_path in {"/models", "/v1/models"}:
+            status_code, payload = _route_response_for_unsupported("POST", normalized_path)
+            self._write_json(status_code, payload)
+            return
+
+        agent = detect_agent(normalized_path)
         if agent is not None:
             recorder = self.server.recorder
             if recorder is None:
@@ -1146,7 +1213,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                     message="listener agent payload parse failure; malformed frames dropped",
                     details={
                         "agent": agent,
-                        "path": parsed.path,
+                        "path": normalized_path,
                         "reason": parse_error,
                         "dropped_frames": parse_dropped,
                     },
@@ -1166,9 +1233,10 @@ class _ListenerHandler(BaseHTTPRequestHandler):
             )
             return
 
-        provider = detect_provider(parsed.path)
+        provider = detect_provider(normalized_path)
         if provider is None:
-            self._write_json(404, {"status": "error", "message": "unsupported path"})
+            status_code, payload = _route_response_for_unsupported("POST", normalized_path)
+            self._write_json(status_code, payload)
             return
 
         recorder = self.server.recorder
@@ -1194,7 +1262,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                 raise RuntimeError("simulated capture failure")
             status_code, response_body = recorder.record_provider_transaction(
                 provider=provider,
-                path=parsed.path,
+                path=normalized_path,
                 query_params={key: value for key, value in parse_qsl(parsed.query, keep_blank_values=True)},
                 payload=payload,
                 headers={str(key): str(value) for key, value in self.headers.items()},
@@ -1229,7 +1297,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
                 message=internal_message,
                 details={
                     "provider": provider,
-                    "path": parsed.path,
+                    "path": normalized_path,
                     "error": str(error),
                     "capture_error_count": capture_error_count,
                     "fallback_policy": recorder.fallback_policy,
@@ -1241,7 +1309,7 @@ class _ListenerHandler(BaseHTTPRequestHandler):
 
         if self._wants_openai_responses_sse(
             provider=provider,
-            path=parsed.path,
+            path=normalized_path,
             payload=payload,
             status_code=status_code,
         ):

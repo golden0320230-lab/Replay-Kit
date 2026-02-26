@@ -19,6 +19,35 @@ Passive contract details (provider matrix, streaming semantics, failure semantic
 
 Captured artifacts include canonical `model.request`, `model.response`, `tool.request`, `tool.response`, and `error.event` steps.
 
+### Route Compatibility Matrix
+
+| Method | Supported path(s) | Notes |
+| --- | --- | --- |
+| `GET` | `/health` | Listener health/metrics endpoint |
+| `GET` | `/models`, `/v1/models` | OpenAI/Codex model preflight |
+| `POST` | `/responses`, `/v1/responses` | OpenAI Responses API |
+| `POST` | `/v1/chat/completions`, `/chat/completions` | OpenAI Chat Completions |
+| `POST` | `/v1/messages`, `/messages` | Anthropic-style messages |
+| `POST` | `/v1beta/models/<model>:generateContent` | Gemini-compatible generateContent |
+| `POST` | `/agent/codex/events` | Codex agent event ingestion |
+| `POST` | `/agent/claude-code/events` | Claude Code agent event ingestion |
+
+Path compatibility notes:
+
+- Trailing slashes are accepted and normalized (for example `/responses/`).
+- Captured `metadata.path` values are normalized to canonical route paths.
+
+### Unsupported Route Contract
+
+- Unsupported path: returns `404` with:
+  - `code: "unsupported_route"`
+  - `supported_paths` for the current HTTP method
+  - remediation `hint`
+- Method mismatch on a supported path: returns `405` with:
+  - `code: "method_not_allowed"`
+  - `supported_methods`
+  - remediation `hint`
+
 Provider adapter normalization guarantees:
 
 - Every provider request/response pair is emitted as `model.request` then `model.response`.
