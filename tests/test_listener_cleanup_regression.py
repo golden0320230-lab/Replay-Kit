@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import socket
 
+import requests
 from typer.testing import CliRunner
 
 from replaypack.cli.app import app
@@ -146,3 +147,73 @@ def test_listen_env_command_does_not_mutate_process_environment(tmp_path: Path) 
 
     after = dict(os.environ)
     assert before == after
+
+
+def test_listener_rotation_retention_limits_artifact_growth(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+    out_path = tmp_path / "listener-capture.rpk"
+
+    start = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--out",
+            str(out_path),
+            "--rotation-max-steps",
+            "4",
+            "--retention-max-artifacts",
+            "2",
+            "--json",
+        ],
+    )
+    assert start.exit_code == 0, start.output
+    started = json.loads(start.stdout.strip())
+    base_url = f"http://{started['host']}:{started['port']}"
+
+    try:
+        for index in range(6):
+            response = requests.post(
+                f"{base_url}/responses",
+                json={"model": "gpt-5.3-codex", "input": f"rotation-{index}"},
+                timeout=2.0,
+            )
+            assert response.status_code == 200
+
+        status = runner.invoke(
+            app,
+            [
+                "listen",
+                "status",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert status.exit_code == 0, status.output
+        status_payload = json.loads(status.stdout.strip())
+        metrics = status_payload["health"]["metrics"]
+        assert metrics["rotation_max_steps"] == 4
+        assert metrics["retention_max_artifacts"] == 2
+        assert metrics["rotated_artifacts"] >= 3
+        assert metrics["retained_rotation_artifacts"] <= 2
+        assert metrics["retention_pruned_artifacts"] >= 1
+    finally:
+        stop = runner.invoke(
+            app,
+            [
+                "listen",
+                "stop",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ],
+        )
+        assert stop.exit_code == 0, stop.output
+
+    rotated = sorted(tmp_path.glob("listener-capture.part-*.rpk"))
+    assert len(rotated) <= 2
+    assert out_path.exists()

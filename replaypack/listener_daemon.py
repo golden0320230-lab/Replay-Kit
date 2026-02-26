@@ -43,6 +43,8 @@ from replaypack.listener_redaction import redact_listener_headers, redact_listen
 from replaypack.listener_state import remove_listener_state, write_listener_state
 
 _PERSIST_DELAY_ENV = "REPLAYKIT_LISTENER_PERSIST_DELAY_SECONDS"
+_ROTATION_MAX_STEPS_ENV = "REPLAYKIT_LISTENER_ROTATION_MAX_STEPS"
+_RETENTION_MAX_ARTIFACTS_ENV = "REPLAYKIT_LISTENER_RETENTION_MAX_ARTIFACTS"
 
 
 def _utc_now() -> str:
@@ -158,6 +160,28 @@ def _resolve_payload_string_limit() -> int:
         parsed = int(raw)
     except ValueError:
         return _PAYLOAD_STRING_DEFAULT_LIMIT
+    return max(0, parsed)
+
+
+def _resolve_rotation_max_steps() -> int:
+    raw = os.environ.get(_ROTATION_MAX_STEPS_ENV)
+    if raw is None:
+        return 0
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return 0
+    return max(0, parsed)
+
+
+def _resolve_retention_max_artifacts() -> int:
+    raw = os.environ.get(_RETENTION_MAX_ARTIFACTS_ENV)
+    if raw is None:
+        return 0
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return 0
     return max(0, parsed)
 
 
@@ -388,9 +412,14 @@ class _ListenerRunRecorder:
         upstream_timeout_seconds: float,
         upstream_retries: int,
         upstream_retry_backoff_seconds: float,
+        rotation_max_steps: int,
+        retention_max_artifacts: int,
     ) -> None:
         self._lock = threading.Lock()
         self._out_path = out_path
+        self._session_id = session_id
+        self._host = host
+        self._port = int(port)
         normalized_policy = str(fallback_policy).strip().lower()
         if normalized_policy not in _FALLBACK_POLICIES:
             normalized_policy = _FALLBACK_POLICY_SYNTHETIC_ALLOWED
@@ -401,32 +430,17 @@ class _ListenerRunRecorder:
         self._upstream_retry_backoff_seconds = max(
             0.0, min(float(upstream_retry_backoff_seconds), 5.0)
         )
+        self._rotation_max_steps = max(0, int(rotation_max_steps))
+        self._retention_max_artifacts = max(0, int(retention_max_artifacts))
+        self._rotation_count = 0
+        self._retention_pruned_artifacts = 0
+        self._rotation_artifacts: list[Path] = []
+        self._rotation_last_at: str | None = None
+        self._run_segment = 1
         self._step_sequence = 0
         self._request_sequence = 0
         self._agent_event_sequence = 0
-        timestamp = _utc_now()
-        self._run = Run(
-            id=f"run-listener-{session_id}",
-            timestamp=timestamp,
-            source="listener",
-            capture_mode="passive",
-            listener_session_id=session_id,
-            listener_process={
-                "pid": os.getpid(),
-                "executable": sys.executable,
-                "command": list(sys.argv),
-                "cwd": str(Path.cwd()),
-            },
-            listener_bind={"host": host, "port": port},
-            environment_fingerprint={"listener_mode": "passive", "os": os.name},
-            runtime_versions={
-                "python": ".".join(
-                    str(part) for part in sys.version_info[:3]
-                ),
-                "replaykit_listener": "1",
-            },
-            steps=[],
-        )
+        self._run = self._new_run_locked()
         self._persist_locked()
 
     @property
@@ -440,6 +454,94 @@ class _ListenerRunRecorder:
     @property
     def allow_synthetic(self) -> bool:
         return self._fallback_policy == _FALLBACK_POLICY_SYNTHETIC_ALLOWED
+
+    def operational_metrics(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "rotation_max_steps": self._rotation_max_steps,
+                "retention_max_artifacts": self._retention_max_artifacts,
+                "rotated_artifacts": self._rotation_count,
+                "retained_rotation_artifacts": len(self._rotation_artifacts),
+                "retention_pruned_artifacts": self._retention_pruned_artifacts,
+                "rotation_last_at": self._rotation_last_at,
+                "active_segment": self._run_segment,
+            }
+
+    def _new_run_locked(self) -> Run:
+        timestamp = _utc_now()
+        if self._run_segment <= 1:
+            run_id = f"run-listener-{self._session_id}"
+        else:
+            run_id = f"run-listener-{self._session_id}-segment-{self._run_segment:04d}"
+        return Run(
+            id=run_id,
+            timestamp=timestamp,
+            source="listener",
+            capture_mode="passive",
+            listener_session_id=self._session_id,
+            listener_process={
+                "pid": os.getpid(),
+                "executable": sys.executable,
+                "command": list(sys.argv),
+                "cwd": str(Path.cwd()),
+            },
+            listener_bind={"host": self._host, "port": self._port},
+            environment_fingerprint={"listener_mode": "passive", "os": os.name},
+            runtime_versions={
+                "python": ".".join(
+                    str(part) for part in sys.version_info[:3]
+                ),
+                "replaykit_listener": "1",
+            },
+            steps=[],
+        )
+
+    def _rotation_snapshot_path(self, index: int) -> Path:
+        suffix = self._out_path.suffix or ".rpk"
+        stem = self._out_path.stem
+        filename = f"{stem}.part-{index:06d}{suffix}"
+        return self._out_path.with_name(filename)
+
+    def _enforce_retention_locked(self) -> None:
+        if self._retention_max_artifacts <= 0:
+            return
+        while len(self._rotation_artifacts) > self._retention_max_artifacts:
+            oldest = self._rotation_artifacts.pop(0)
+            removed = False
+            try:
+                oldest.unlink()
+                removed = True
+            except FileNotFoundError:
+                removed = True
+            except OSError:
+                removed = False
+            if removed:
+                self._retention_pruned_artifacts += 1
+
+    def _rotate_if_needed_locked(self) -> None:
+        if self._rotation_max_steps <= 0:
+            return
+        if len(self._run.steps) < self._rotation_max_steps:
+            return
+        rotation_index = self._rotation_count + 1
+        snapshot_path = self._rotation_snapshot_path(rotation_index)
+        write_artifact(
+            self._run,
+            snapshot_path,
+            metadata={
+                "mode": "listener.passive",
+                "listener_session_id": self._run.listener_session_id,
+                "segment": self._run_segment,
+                "rotation_index": rotation_index,
+                "rotation_max_steps": self._rotation_max_steps,
+            },
+        )
+        self._rotation_count = rotation_index
+        self._rotation_last_at = _utc_now()
+        self._rotation_artifacts.append(snapshot_path)
+        self._enforce_retention_locked()
+        self._run_segment += 1
+        self._run = self._new_run_locked()
 
     def record_provider_transaction(
         self,
@@ -1040,8 +1142,12 @@ class _ListenerRunRecorder:
             metadata={
                 "mode": "listener.passive",
                 "listener_session_id": self._run.listener_session_id,
+                "segment": self._run_segment,
+                "rotation_max_steps": self._rotation_max_steps,
+                "retention_max_artifacts": self._retention_max_artifacts,
             },
         )
+        self._rotate_if_needed_locked()
 
 
 class _ReplayListenerServer(ThreadingHTTPServer):
@@ -1088,13 +1194,17 @@ class _ReplayListenerServer(ThreadingHTTPServer):
             self.degraded_responses += 1
             return self.degraded_responses
 
-    def metrics_payload(self) -> dict[str, int]:
+    def metrics_payload(self) -> dict[str, Any]:
         with self._metrics_lock:
-            return {
+            payload: dict[str, Any] = {
                 "capture_errors": self.capture_errors,
                 "dropped_events": self.dropped_events,
                 "degraded_responses": self.degraded_responses,
             }
+        recorder = self.recorder
+        if recorder is not None:
+            payload.update(recorder.operational_metrics())
+        return payload
 
 
 class _ListenerHandler(BaseHTTPRequestHandler):
@@ -1536,6 +1646,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Max string length for captured request payload values (0 disables truncation).",
     )
     parser.add_argument(
+        "--rotation-max-steps",
+        default=_resolve_rotation_max_steps(),
+        type=int,
+        help=(
+            "Rotate listener artifacts after this many recorded steps "
+            "(0 disables rotation)."
+        ),
+    )
+    parser.add_argument(
+        "--retention-max-artifacts",
+        default=_resolve_retention_max_artifacts(),
+        type=int,
+        help=(
+            "Retain at most this many rotated artifact snapshots "
+            "(0 keeps all rotated snapshots)."
+        ),
+    )
+    parser.add_argument(
         "--fallback-policy",
         default=_FALLBACK_POLICY_SYNTHETIC_ALLOWED,
         choices=sorted(_FALLBACK_POLICIES),
@@ -1632,6 +1760,8 @@ def _runtime_payload(
     out_path: Path,
     fallback_policy: str,
     payload_string_limit: int,
+    rotation_max_steps: int,
+    retention_max_artifacts: int,
     upstream_timeout_seconds: float,
     upstream_retries: int,
     upstream_retry_backoff_seconds: float,
@@ -1653,6 +1783,8 @@ def _runtime_payload(
         "upstream_retry_backoff_seconds": upstream_retry_backoff_seconds,
         "payload_string_limit": payload_string_limit,
         "full_payload_capture": payload_string_limit <= 0,
+        "rotation_max_steps": max(0, int(rotation_max_steps)),
+        "retention_max_artifacts": max(0, int(retention_max_artifacts)),
         "started_at": _utc_now(),
         "process": {
             "pid": os.getpid(),
@@ -1675,6 +1807,8 @@ def main(argv: list[str] | None = None) -> int:
     upstream_timeout_seconds = max(0.1, min(float(args.upstream_timeout_seconds), 120.0))
     upstream_retries = max(0, min(int(args.upstream_retries), 5))
     upstream_retry_backoff_seconds = max(0.0, min(float(args.upstream_retry_backoff_seconds), 5.0))
+    rotation_max_steps = max(0, int(args.rotation_max_steps))
+    retention_max_artifacts = max(0, int(args.retention_max_artifacts))
 
     try:
         server = _ReplayListenerServer(
@@ -1699,6 +1833,8 @@ def main(argv: list[str] | None = None) -> int:
         upstream_timeout_seconds=upstream_timeout_seconds,
         upstream_retries=upstream_retries,
         upstream_retry_backoff_seconds=upstream_retry_backoff_seconds,
+        rotation_max_steps=rotation_max_steps,
+        retention_max_artifacts=retention_max_artifacts,
     )
     write_listener_state(
         args.state_file,
@@ -1709,6 +1845,8 @@ def main(argv: list[str] | None = None) -> int:
             out_path=args.out,
             fallback_policy=fallback_policy,
             payload_string_limit=max(0, int(args.payload_string_limit)),
+            rotation_max_steps=rotation_max_steps,
+            retention_max_artifacts=retention_max_artifacts,
             upstream_timeout_seconds=upstream_timeout_seconds,
             upstream_retries=upstream_retries,
             upstream_retry_backoff_seconds=upstream_retry_backoff_seconds,

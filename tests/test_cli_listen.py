@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import socket
 
@@ -374,3 +375,91 @@ def test_cli_listen_start_with_full_payload_capture_exposes_policy(tmp_path: Pat
         ],
     )
     assert stop.exit_code == 0, stop.output
+
+
+def test_cli_listen_start_exposes_rotation_and_retention_controls(tmp_path: Path) -> None:
+    runner = CliRunner()
+    state_file = tmp_path / "listener-state.json"
+
+    start = runner.invoke(
+        app,
+        [
+            "listen",
+            "start",
+            "--state-file",
+            str(state_file),
+            "--rotation-max-steps",
+            "4",
+            "--retention-max-artifacts",
+            "2",
+            "--json",
+        ],
+    )
+    assert start.exit_code == 0, start.output
+    started = json.loads(start.stdout.strip())
+    assert started["rotation_max_steps"] == 4
+    assert started["retention_max_artifacts"] == 2
+
+    status = runner.invoke(
+        app,
+        [
+            "listen",
+            "status",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert status.exit_code == 0, status.output
+    running_payload = json.loads(status.stdout.strip())
+    assert running_payload["rotation_max_steps"] == 4
+    assert running_payload["retention_max_artifacts"] == 2
+
+    stop = runner.invoke(
+        app,
+        [
+            "listen",
+            "stop",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ],
+    )
+    assert stop.exit_code == 0, stop.output
+
+
+def test_cli_listen_cleanup_prunes_oldest_artifacts(tmp_path: Path) -> None:
+    runner = CliRunner()
+    artifact_dir = tmp_path / "listener-artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    for index, name in enumerate(("a", "b", "c", "d"), start=1):
+        path = artifact_dir / f"{name}.rpk"
+        path.write_text("{}", encoding="utf-8")
+        ts = 1_700_000_000 + index
+        os.utime(path, (ts, ts))
+
+    cleanup = runner.invoke(
+        app,
+        [
+            "listen",
+            "cleanup",
+            "--artifact-dir",
+            str(artifact_dir),
+            "--glob",
+            "*.rpk",
+            "--keep",
+            "2",
+            "--json",
+        ],
+    )
+    assert cleanup.exit_code == 0, cleanup.output
+    payload = json.loads(cleanup.stdout.strip())
+    assert payload["status"] == "ok"
+    assert payload["scanned_count"] == 4
+    assert payload["removed_count"] == 2
+    assert payload["kept_count"] == 2
+    assert payload["error_count"] == 0
+
+    remaining = sorted(path.name for path in artifact_dir.glob("*.rpk"))
+    assert remaining == ["c.rpk", "d.rpk"]
